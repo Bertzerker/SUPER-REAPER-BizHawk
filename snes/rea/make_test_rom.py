@@ -2,7 +2,9 @@
 from pathlib import Path
 import struct
 import sys
-mode=next((m for m in ('raster','mode7','hires','interlace') if '--'+m in sys.argv),'diagnostic')
+mode=next((m for m in ('raster','mode7','hires','interlace','catalog','catalog-mode0') if '--'+m in sys.argv),'diagnostic')
+catalog=mode in ('catalog','catalog-mode0')
+mode0=mode=='catalog-mode0'
 
 rom=bytearray([0xff]*32768)
 code=bytearray(); labels={}; fixups=[]; address_fixups=[]
@@ -27,9 +29,18 @@ vaddr(0)
 for tile in range(4):
  for row in range(8):write(0x2118,255 if tile in (0,3) else 0);write(0x2119,255 if tile==1 else 0)
  for row in range(8):write(0x2118,0);write(0x2119,0)
+if catalog:
+ for row in range(8):write(0x2118,0x3c if 1<=row<=6 else 0);write(0x2119,0)
+ for row in range(8):write(0x2118,0);write(0x2119,0)
 # BG1 map is blank except one green tile. BG2 stays solid red.
-vaddr(0x1000);ldx(1024);label('map');write(0x2118,2);write(0x2119,0);emit(0xca);branch(0xd0,'map')
-vaddr(0x1000+5*32+4);write(0x2118,1);write(0x2119,0)
+vaddr(0x1000);ldx(1024);label('map');write(0x2118,4 if mode0 else 2);write(0x2119,0);emit(0xca);branch(0xd0,'map')
+vaddr(0x1000+5*32+4);write(0x2118,2 if mode0 else 1);write(0x2119,0)
+if catalog:
+ vaddr(0x1000+5*32+12);write(0x2118,2 if mode0 else 1);write(0x2119,0)
+if mode0:
+ for bg,base in enumerate((0x1800,0x1c00),3):
+  vaddr(base);ldx(1024);loop=f'map-bg{bg}';label(loop);write(0x2118,4);write(0x2119,0);emit(0xca);branch(0xd0,loop)
+  vaddr(base+5*32+4);write(0x2118,2);write(0x2119,0)
 if mode=='raster':
  for row in range(32):
   vaddr(0x1000+row*32+4);write(0x2118,1);write(0x2119,0)
@@ -38,7 +49,8 @@ if mode=='mode7':
 # CGRAM: black, red, green; sprite palette 8 blue at index129.
 write(0x2121,0)
 for i in range(256):
- color={1:0x001f,2:0x03e0,129:0x7c00}.get(i,0)
+ color={1:0x001f,2:0x03e0,129:0x7c00,**({145:0x03ff} if catalog else {}),
+        **({33:0x001f,66:0x7fe0,98:0x7c1f} if mode0 else {})}.get(i,0)
  write(0x2122,color&255);write(0x2122,color>>8)
 # Hide unused objects, initialize object0 x64 y48 tile3 palette0 priority3.
 write(0x2102,0);write(0x2103,0)
@@ -46,12 +58,15 @@ ldx(128);label('oam');write(0x2104,0);write(0x2104,240);write(0x2104,2);write(0x
 ldx(32);label('oam-high');write(0x2104,0);emit(0xca);branch(0xd0,'oam-high')
 write(0x2102,0);write(0x2103,0)
 for v in (64,48,3,0x30):write(0x2104,v)
+if catalog:
+ for v in (144,48,3,0x30):write(0x2104,v)
 if mode=='raster':
  write(0x2102,0);write(0x2103,0)
  for n in range(40):
   for v in (64 if n==0 else (n-1)*6,48 if n==0 else 160,3,0x30):write(0x2104,v)
-write(0x2105,7 if mode=='mode7' else 5 if mode=='hires' else 1);write(0x2107,0x10);write(0x2108,0x14);write(0x210b,0)
-write(0x212c,0x13) # OBJ BG2 BG1
+write(0x2105,7 if mode=='mode7' else 5 if mode=='hires' else 0 if mode0 else 1);write(0x2107,0x10);write(0x2108,0x14);write(0x210b,0)
+if mode0:write(0x2109,0x18);write(0x210a,0x1c)
+write(0x212c,0x1f if mode0 else 0x13)
 for a in (0x210d,0x210e,0x210f,0x2110):write(a,0);write(a,0)
 if mode=='mode7':
  for a in (0x211b,0x211c,0x211d,0x211e):write(a,0);write(a,1 if a in (0x211b,0x211e) else 0)
@@ -68,11 +83,30 @@ for i,v in enumerate(b'REA1'):write(0x10+i,v)
 write(0x14,0);write(0x20,64);write(0x4200,0x81);write(0x2100,15)
 label('loop');emit(0xcb);branch(0x80,'loop')
 label('nmi');emit(0x48);emit(0xad,0x10,0x42) # acknowledge NMI
+if catalog:
+ # Let automatic joypad polling finish before sampling the current frame's inputs.
+ emit(0xda);ldx(256);label('catalog-joypad-delay');emit(0xca);branch(0xd0,'catalog-joypad-delay');emit(0xfa)
 emit(0xe6,0x14) # increment frame sentinel
 emit(0xad,0x19,0x42,0x85,0x15,0x29,0x01);branch(0xf0,'no-right');emit(0xe6,0x20)
 label('no-right');emit(0xad,0x19,0x42,0x29,0x02);branch(0xf0,'no-left');emit(0xc6,0x20)
 label('no-left');write(0x2102,0);write(0x2103,0);emit(0xa5,0x20);sta(0x2104)
-for v in (48,3,0x30):write(0x2104,v)
+if catalog:
+ # B hides the moving object. Y selects a second palette on the stationary copy.
+ emit(0xa5,0x15,0x29,0x80);branch(0xf0,'catalog-shown')
+ lda(240);branch(0x80,'catalog-y')
+ label('catalog-shown');lda(48)
+ label('catalog-y');sta(0x2104)
+ emit(0xa5,0x14,0x29,8);branch(0xf0,'catalog-tile3')
+ lda(4);branch(0x80,'catalog-animation')
+ label('catalog-tile3');lda(3)
+ label('catalog-animation');sta(0x2104);sta(0x16);write(0x2104,0x30)
+ write(0x2104,144);write(0x2104,48);emit(0xa5,0x16);sta(0x2104)
+ emit(0xa5,0x15,0x29,0x40);branch(0xf0,'catalog-palette0')
+ lda(0x32);branch(0x80,'catalog-palette')
+ label('catalog-palette0');lda(0x30)
+ label('catalog-palette');sta(0x2104)
+else:
+ for v in (48,3,0x30):write(0x2104,v)
 emit(0x68,0x40)
 label('rti');emit(0x40)
 if mode=='raster':

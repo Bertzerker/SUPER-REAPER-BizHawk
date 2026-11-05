@@ -3,13 +3,13 @@
   "assets": [
     {
       "path": "dist/bsnes-rea.wbx.zst",
-      "sha256": "802cec5f3f8dc1e6ad6009ba1526f54345a18c9c56b9d103e9422ca198c6bf43",
-      "bytes": 652828
+      "sha256": "0a5a1241e2005e20ff3584b2f82fef99cd5377061fca7505a4216b4809d2e42e",
+      "bytes": 653918
     },
     {
       "path": "dist/REA.SNES.dll",
-      "sha256": "bdd0410fb77a3a24e5f2294cb8fe67487672788889f65c264e772beb1be5c4cf",
-      "bytes": 67584
+      "sha256": "a75a2b8df41f04cd64e116ce9d2ec58187b01f1f857adbc7b41b7b867d816537",
+      "bytes": 72704
     }
   ]
 }

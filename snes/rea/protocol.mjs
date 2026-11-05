@@ -8,12 +8,16 @@ export function unpack(packet) {
  if(meta.type!=='frame')return {meta,payload};
  if(meta.schema!==1 || !/^[a-f0-9]{32}-\d+$/.test(meta.id))throw Error('Unsupported snapshot');
  let end=0;
- for(const block of [...meta.domains,meta.atlas,meta.tiles,...(meta.raster?[meta.raster]:[])]) {
+ for(const block of [...meta.domains,meta.atlas,meta.tiles,...(meta.raster?[meta.raster]:[]),...(meta.sampleIdentity?[meta.sampleIdentity]:[])]) {
   const size=block.length??block.size;
   if(!Number.isSafeInteger(block.offset)||!Number.isSafeInteger(size)||size<0||block.offset!==end)throw Error('Invalid block layout');
   end+=size;
  }
  if(end!==payload.length || meta.atlas.length!==meta.atlas.width*meta.atlas.height*4)throw Error('Invalid capture length');
+ const identity=meta.sampleIdentity;
+ if(identity?.length && (identity.schema!==1 || !meta.raster?.valid || identity.status!=='captured' ||
+   meta.raster.width!==256 || meta.raster.height>240 || identity.length!==meta.raster.width*meta.raster.height*80))
+  throw Error('Invalid sample identity plane');
  return {meta,payload,packet};
 }
 export class Framer {

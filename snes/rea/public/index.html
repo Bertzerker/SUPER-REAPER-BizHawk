@@ -19,13 +19,63 @@
   <section data-inspector-panel="registers" hidden><h2>PPU configuration</h2><pre id="ppu">No capture.</pre><details><summary>OBJ tile memory diagnostic</summary><div class="tile-row"><img id="tiles" width="128" height="128" alt="OBJ tile memory preview"><small>Memory diagnostic · 4bpp · palette 8 · current OBJ table 0. Not a raster layer or game hitbox.</small></div></details><p>Native main/sub samples are retained. Exact fetch-address/CPU provenance and game collision knowledge are unavailable.</p></section>
  </aside>
 </div>
-<section class="drawer"><div role="tablist" aria-label="Workbench drawer"><button role="tab" data-drawer="movies" aria-selected="true">Movies</button><button role="tab" data-drawer="comments" aria-selected="false">Comments</button><button role="tab" data-drawer="checkpoints" aria-selected="false">Checkpoints</button><button role="tab" data-drawer="execution" aria-selected="false">Execution</button><button role="tab" data-drawer="performance" aria-selected="false">Performance</button></div>
+<section class="drawer"><div role="tablist" aria-label="Workbench drawer"><button role="tab" data-drawer="movies" aria-selected="true">Movies</button><button role="tab" data-drawer="catalog" aria-selected="false">Sprite &amp; tile catalog</button><button role="tab" data-drawer="comments" aria-selected="false">Comments</button><button role="tab" data-drawer="checkpoints" aria-selected="false">Checkpoints</button><button role="tab" data-drawer="execution" aria-selected="false">Execution</button><button role="tab" data-drawer="performance" aria-selected="false">Performance</button></div>
  <div data-drawer-panel="movies"><section><div class="section-title">INPUT MOVIE <span id="movie-mode">INACTIVE</span></div><p id="movie-info">Record your playthrough, then replay it for the AI.</p><div class="fields"><select id="saved-movies" aria-label="Saved movie"><option value="">Choose a saved movie</option></select><button id="refresh-movies">Refresh</button></div><div class="fields"><input id="movie-name" value="playthrough" aria-label="Movie name"><select id="movie-start" aria-label="Recording start"><option value="checkpoint">From current state</option><option value="poweron">From power-on</option></select></div><div class="buttons"><button id="movie-play">Play / resume movie</button><button data-action="pause">Pause movie</button><button id="record" class="accent">Record inputs</button><button data-action="movie-save">Save movie</button><button data-action="movie-stop">Save & stop</button><button id="play">Load / restart named movie</button><button data-action="tastudio">Open TAStudio</button><button id="inputs">Inspect input log</button></div><small>Playback speed is set above the render. Movies save as .bk2 in rea/movies. Names use letters, numbers, - and _.</small><pre id="input-log">No input log selected.</pre></section></div>
+ <section data-drawer-panel="catalog" id="catalog-panel" hidden>
+  <h2>Sprite &amp; tile catalog</h2>
+  <p id="catalog-status" role="status">Waiting for a capture.</p>
+  <div class="buttons">
+   <button id="catalog-enable">Enable native catalog sampling</button>
+   <button id="catalog-latest">Inspect latest catalog frame</button>
+   <button id="catalog-live">Return to live</button>
+   <button id="catalog-reload">Reload catalog</button>
+  </div>
+  <small>Native identity samples one in four completed renders. Inspect a sampled frame, then select a pixel above. If paused, step four frames to get a sample.</small>
+  <div class="catalog-layout">
+   <div>
+    <h3>Pick and grow</h3>
+    <div class="fields">
+     <label>Kind<select id="catalog-kind"><option value="sprite">Sprite</option><option value="tile">Tile</option></select></label>
+     <label>Evidence source<select id="catalog-source"><option value="fastppu-sample-v1">FastPPU selected pixel</option><option value="oam-vram-diagnostic">OAM slot diagnostic</option><option value="vram-tile-diagnostic">VRAM tile diagnostic</option></select></label>
+    </div>
+    <div class="fields">
+     <label id="catalog-diagnostic-label" hidden>OAM slot or OBJ table 0 tile<input id="catalog-diagnostic-index" type="number" min="0" max="255" value="0"></label>
+     <button id="catalog-pick">Read seed evidence</button>
+     <label>Captured source<select id="catalog-choice"><option value="">Choose a captured sample</option></select></label>
+    </div>
+    <pre id="catalog-seed">Select a captured pixel, OAM slot or VRAM tile.</pre>
+    <div class="fields"><label>Name<input id="catalog-name" maxlength="80"></label><label>Labels, comma separated<input id="catalog-labels" maxlength="500"></label></div>
+    <label>Catalog notes<textarea id="catalog-notes" rows="3" maxlength="2000"></textarea></label>
+    <label><input id="catalog-palette-variants" type="checkbox"> Match palette variants</label>
+    <div class="buttons">
+     <button id="catalog-add">Add to catalog</button>
+     <button id="catalog-append">Append seed to entry</button>
+     <button id="catalog-edit">Save entry edits</button>
+    </div>
+    <details><summary>Review or edit typed selectors</summary><label>Selectors JSON<textarea id="catalog-selectors" rows="6" spellcheck="false"></textarea></label></details>
+    <details><summary>Import or export a catalog</summary><label>Catalog JSON<textarea id="catalog-import-text" rows="5" spellcheck="false"></textarea></label><div class="buttons"><button id="catalog-export">Copy catalog into editor</button><button id="catalog-import">Import new entries</button></div></details>
+   </div>
+   <div>
+    <h3>Find and isolate</h3>
+    <div class="fields"><label>Search catalog<input id="catalog-search" type="search"></label><label>Filter kind<select id="catalog-filter"><option value="">All kinds</option><option value="sprite">Sprites</option><option value="tile">Tiles</option></select></label></div>
+    <label>Catalog entry<select id="catalog-entry"><option value="">Choose an entry</option></select></label>
+    <div class="fields">
+     <label>Isolation layer and evidence<select id="catalog-view"><option value="">Choose a selector source</option></select></label>
+     <label>Screen samples<select id="catalog-screen"><option value="displayed">Displayed layer</option><option value="main">Main</option><option value="sub">Sub</option></select></label>
+    </div>
+    <div class="buttons"><button id="catalog-all">Show all matches</button><button id="catalog-follow">Follow instance</button><button id="catalog-pin">Pin catalog result</button><button id="catalog-attach">Attach to comment</button></div>
+    <label>Matching instance<select id="catalog-instance"><option value="">Choose one occurrence</option></select></label>
+    <p id="catalog-result" role="status">Choose an entry and show its matches.</p>
+    <canvas id="catalog-image" width="256" height="224" role="img" aria-label="Isolated sprite or tile samples at their original coordinates"></canvas>
+    <small>FastPPU isolation shows admitted layer samples before color math. Copied OAM and VRAM previews use end-of-frame memory.</small>
+   </div>
+  </div>
+ </section>
  <div data-drawer-panel="comments" hidden><section class="notes-panel" id="notes-panel">
   <div class="section-title">FRAME COMMENTS <span id="note-status">Render + memory + movie frame</span></div>
   <div class="notes-layout"><aside><div class="fields"><button id="refresh-notes">Refresh comments</button><label><input type="checkbox" id="all-notes"> All games</label></div><div class="buttons"><button id="discard-draft">Discard draft</button><button id="recover-draft">Recover discarded draft</button><button id="export-draft">Export draft</button></div><div id="note-list">No saved comments yet.</div></aside>
    <div><div id="note-empty">Capture a frame to start a comment. Playback pauses while its render and memory are saved.</div>
-    <div id="note-editor" hidden><div class="note-evidence"><img id="note-thumbnail" alt="Saved frame render"><div><b id="note-frame"></b><small id="note-movie"></small><small id="note-rom"></small><button id="inspect-note">Inspect saved frame</button><small>Inspection evidence; this does not rewind the emulator.</small><div id="note-downloads" class="buttons"></div></div></div>
+    <div id="note-editor" hidden><div class="note-evidence"><img id="note-thumbnail" alt="Saved frame render"><div><b id="note-frame"></b><small id="note-movie"></small><div id="note-catalog" hidden></div><small id="note-rom"></small><button id="inspect-note">Inspect saved frame</button><small>Inspection evidence; this does not rewind the emulator.</small><div id="note-downloads" class="buttons"></div></div></div>
      <label class="editor-label">Comment title<input id="note-title" aria-label="Comment title" maxlength="200"></label>
      <div class="fields"><label>Type <select id="note-category" aria-label="Comment type"><option value="observation">Observation</option><option value="hypothesis">Hypothesis</option><option value="question">Question</option></select></label><label>Format <select id="note-format" aria-label="Comment format"><option value="markdown">Markdown (mixed blocks)</option><option value="json">JSON</option><option value="mermaid">Mermaid diagram</option></select></label><button id="insert-json">Insert JSON block</button><button id="insert-mermaid">Insert Mermaid diagram</button><button id="preview-note">Preview</button><button id="save-note" class="accent">Save comment</button></div>
      <div class="note-composer"><label class="editor-label">Source<textarea id="note-body" aria-label="Comment source" rows="13" maxlength="100000" spellcheck="false" placeholder="Describe this frame. Markdown supports fenced json and mermaid blocks."></textarea></label><div><span class="editor-label">Preview</span><div id="note-preview" class="note-preview">Your rendered comment will appear here.</div></div></div>

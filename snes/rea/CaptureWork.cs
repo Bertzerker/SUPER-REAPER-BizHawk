@@ -64,14 +64,17 @@ namespace REASnes {
    Header["atlas"]=new {width=aw,height=ah,format="BGRA8888",offset=MemoryLength,length=atlasSize,panels};
    Header["tiles"]=new {width=128,height=128,format="BGRA8888",offset=MemoryLength+atlasSize,length=tileSize,kind="obj-4bpp-memory-preview"};
    Header["raster"]=new {available=Header["nativeAvailable"],valid=Raster.Ready,generation=Raster.Generation,renderFrame=Header["renderFrame"],flags=Raster.Flags,fieldMask=Raster.FieldMask,reason=Raster.Reason,width=vw,height=vh,offset=MemoryLength+atlasSize+tileSize,length=Raster.WordCount*4,format="11 planar uint32 LE: composite; BG1 main/sub; BG2 main/sub; BG3 main/sub; BG4 main/sub; OBJ main/sub"};
+   int identitySize=Raster.IdentityWords*4;
+   Header["sampleIdentity"]=new {schema=1,status=Raster.IdentityStatus,offset=MemoryLength+atlasSize+tileSize+Raster.WordCount*4,length=identitySize,interval=4};
    Header.Remove("nativeAvailable");Header.Remove("renderFrame");Header["encode_ms"]=watch.Elapsed.TotalMilliseconds;
    byte[] json=Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(Header));
-   int size=4+json.Length+MemoryLength+atlasSize+tileSize+Raster.WordCount*4;
+   int size=4+json.Length+MemoryLength+atlasSize+tileSize+Raster.WordCount*4+identitySize;
    PacketLength=size+4;if(packet.Length<PacketLength)packet=new byte[PacketLength];
    Buffer.BlockCopy(BitConverter.GetBytes(size),0,packet,0,4);Buffer.BlockCopy(BitConverter.GetBytes(json.Length),0,packet,4,4);Buffer.BlockCopy(json,0,packet,8,json.Length);
    int offset=8+json.Length;foreach(var b in Blocks){Buffer.BlockCopy(b,0,packet,offset,b.Length);offset+=b.Length;}
    Buffer.BlockCopy(atlas,0,packet,offset,atlasSize);offset+=atlasSize;Buffer.BlockCopy(tiles,0,packet,offset,tileSize);offset+=tileSize;
    if(Raster.WordCount!=0)Buffer.BlockCopy(Raster.Words,0,packet,offset,Raster.WordCount*4);
+   if(identitySize!=0)Buffer.BlockCopy(Raster.Identities,0,packet,offset+Raster.WordCount*4,identitySize);
    return packet;
   }
  }

@@ -7,7 +7,8 @@ const validId=id=>typeof id==='string'&&/^[a-f0-9-]{36}$/.test(id);
 const digest=b=>createHash('sha256').update(b).digest('hex');
 function markdownExport(note){
  const content=note.format==='markdown'?note.body:'```'+note.format+'\n'+note.body+'\n```\n';
- return `---\nannotation: ${note.id}\nmovie: ${JSON.stringify(note.movie.filename)}\nmovie_frame: ${note.movie.timelineFrame}\nemulated_frame: ${note.snapshot.frame}\nsnapshot: ${note.snapshot.id}\nrom_sha1: ${note.snapshot.rom.hash}\n---\n\n# ${note.title}\n\n${content}`;
+ const catalog=note.catalog?`\n\nCatalog observation · ${note.catalog.entry.name} (revision ${note.catalog.entry.revision}) · ${note.catalog.layer.toUpperCase()} · ${note.catalog.evidence}\n\n[Observation data](catalog.json) · [Isolated sample image](catalog.png)\n`:'';
+ return `---\nannotation: ${note.id}\nmovie: ${JSON.stringify(note.movie.filename)}\nmovie_frame: ${note.movie.timelineFrame}\nemulated_frame: ${note.snapshot.frame}\nsnapshot: ${note.snapshot.id}\nrom_sha1: ${note.snapshot.rom.hash}\n---\n\n# ${note.title}\n\n${content}${catalog}`;
 }
 export function validateNote(input){
  const title=String(input.title??'').trim(),format=input.format??'markdown',body=String(input.body??'');
@@ -26,13 +27,26 @@ export class Annotations {
   const rows=await Promise.all(names.filter(validId).map(id=>this.get(id).catch(()=>null)));
   return rows.filter(Boolean).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
  }
- async capture(s,movieCopy=null){
+ async capture(s,movieCopy=null,attachment=null){
   const id=randomUUID(),folder=this.folder(id),staging=folder+'.pending';await mkdir(staging,{recursive:true});
   try {
    const m=s.meta,packet=s.packet,atlas=this.makePng(s),composite=this.makePng(s,'composite'),memory=s.payload.subarray(0,m.atlas.offset);
    const record={schema:1,id,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),revision:1,title:'Frame '+m.frame,format:'markdown',body:'',snapshot:{id:m.id,frame:m.frame,generation:m.raster?.generation,rom:m.rom,core:m.core,version:m.version,timing:m.timing,native:!!m.raster?.valid},movie:{...m.movie,filename:m.movie?.filename?.split(/[\\/]/).at(-1)??'',timelineFrame:m.movie?.timelineFrame??null,previousInputRow:m.movie?.timelineFrame>0?m.movie.timelineFrame-1:null,sha256:movieCopy?digest(movieCopy):null,archived:!!movieCopy},domains:m.domains,files:{capture:{name:'capture.bin',sha256:digest(packet),bytes:packet.length},atlas:{name:'atlas.png',sha256:digest(atlas),bytes:atlas.length},composite:{name:'composite.png',sha256:digest(composite),bytes:composite.length},memory:{name:'memory.bin',sha256:digest(memory),bytes:memory.length}}};
    const files=[['capture.bin',packet],['atlas.png',atlas],['composite.png',composite],['memory.bin',memory],['snapshot.json',JSON.stringify(m,null,2)],['annotation.json',JSON.stringify(record,null,2)],['comment.md',markdownExport(record)]];
    if(movieCopy)files.push(['movie.bk2',movieCopy]);
+   if(attachment){
+    record.catalog={...attachment.record,movie:{
+     filename:record.movie.filename,mode:record.movie.mode,timelineFrame:record.movie.timelineFrame,
+     previousInputRow:record.movie.previousInputRow,rerecords:record.movie.rerecords??null,
+     loadedSha256:record.movie.loadedSha256??null,archiveSha256:record.movie.sha256,
+    }};
+    const catalogJson=JSON.stringify(record.catalog,null,2);
+    record.files.catalog={name:'catalog.json',sha256:digest(catalogJson),bytes:Buffer.byteLength(catalogJson)};
+    record.files.catalogImage={name:'catalog.png',sha256:digest(attachment.png),bytes:attachment.png.length};
+    files.push(['catalog.json',catalogJson],['catalog.png',attachment.png]);
+    files.find(f=>f[0]==='annotation.json')[1]=JSON.stringify(record,null,2);
+    files.find(f=>f[0]==='comment.md')[1]=markdownExport(record);
+   }
    await Promise.all(files.map(([name,bytes])=>writeFile(path.join(staging,name),bytes,{flag:'wx'})));
    await rename(staging,folder);return record;
   }catch(e){await rm(staging,{recursive:true,force:true});throw e;}
@@ -51,8 +65,13 @@ export class Annotations {
  }
  async snapshot(id){const bytes=await readFile(path.join(this.folder(id),'capture.bin'));const record=await this.get(id);if(digest(bytes)!==record.files.capture.sha256)throw Error('Saved evidence hash mismatch');return unpack(bytes);}
  async file(id,name){
-  if(!['capture.bin','atlas.png','composite.png','memory.bin','snapshot.json','annotation.json','comment.md','movie.bk2'].includes(name))throw Error('Unknown annotation file');
+  if(!['capture.bin','atlas.png','composite.png','memory.bin','snapshot.json','annotation.json','comment.md','movie.bk2','catalog.json','catalog.png'].includes(name))throw Error('Unknown annotation file');
   if(name==='comment.md')return Buffer.from(markdownExport(await this.get(id)));
-  return readFile(path.join(this.folder(id),name));
+  const bytes=await readFile(path.join(this.folder(id),name));
+  if(name==='catalog.json'||name==='catalog.png'){
+   const record=await this.get(id),expected=record.files[name==='catalog.json'?'catalog':'catalogImage'];
+   if(!expected||expected.bytes!==bytes.length||expected.sha256!==digest(bytes))throw Error('Saved catalog evidence hash mismatch');
+  }
+  return bytes;
  }
 }

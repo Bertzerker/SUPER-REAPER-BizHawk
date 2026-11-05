@@ -2,7 +2,8 @@
 import http from 'node:http';
 import net from 'node:net';
 import {createHash,randomUUID} from 'node:crypto';
-import {readFile,readdir,stat} from 'node:fs/promises';
+import {readFile,readdir,realpath,stat} from 'node:fs/promises';
+import {realpathSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import {deflateSync} from 'node:zlib';
@@ -11,12 +12,13 @@ import {WordRuns} from './public/transport.mjs';
 import {Annotations} from './annotations.mjs';
 import {comparisonReason,checkpointReason} from './public/model.mjs';
 import {investigation} from './bundle.mjs';
+import {Catalog,identityReason,isolate,observation,pick,sampleChoices,selectionContext} from './catalog.mjs';
 
 export function streamPacket(s,encoder=new WordRuns()){
  // Pixel queries retain all eleven native planes on the server. The viewer
  // needs the atlas and memory, not another copy of every native sample plane.
  const end=s.meta.raster?.offset??s.payload.length,raw=s.payload.subarray(0,end),encoded=encoder.encode(raw);
- const meta={...s.meta,raster:s.meta.raster?{...s.meta.raster,length:0,streamed:false}:undefined,transport:{codec:encoded.codec,rawLength:raw.length,encodedLength:encoded.bytes.length}};
+ const meta={...s.meta,raster:s.meta.raster?{...s.meta.raster,length:0,streamed:false}:undefined,sampleIdentity:s.meta.sampleIdentity?{...s.meta.sampleIdentity,streamed:false}:undefined,transport:{codec:encoded.codec,rawLength:raw.length,encodedLength:encoded.bytes.length}};
  const json=Buffer.from(JSON.stringify(meta)),prefix=Buffer.alloc(4);prefix.writeUInt32LE(json.length);
  return Buffer.concat([prefix,json,encoded.bytes]);
 }
@@ -31,6 +33,15 @@ export function websocketFrame(payload,opcode=2){
 let crcTable;
 function crc32(b){crcTable??=Array.from({length:256},(_,i)=>{for(let j=0;j<8;j++)i=i&1?0xedb88320^(i>>>1):i>>>1;return i>>>0;});let c=0xffffffff;for(const v of b)c=crcTable[(c^v)&255]^(c>>>8);return(c^0xffffffff)>>>0;}
 function pngChunk(type,bytes){const t=Buffer.from(type),out=Buffer.alloc(bytes.length+12);out.writeUInt32BE(bytes.length);t.copy(out,4);bytes.copy(out,8);out.writeUInt32BE(crc32(Buffer.concat([t,bytes])),out.length-4);return out;}
+function pngRows(width,height,data){
+ const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(width);ihdr.writeUInt32BE(height,4);ihdr[8]=8;ihdr[9]=6;
+ return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),pngChunk('IHDR',ihdr),pngChunk('IDAT',deflateSync(data)),pngChunk('IEND',Buffer.alloc(0))]);
+}
+function catalogPng({width,height,pixels}){
+ const stride=width*4,rows=Buffer.alloc((stride+1)*height);
+ for(let y=0;y<height;y++)pixels.copy(rows,y*(stride+1)+1,y*stride,(y+1)*stride);
+ return pngRows(width,height,rows);
+}
 export function png(s,view='atlas'){
  let {width,height,offset}=s.meta.atlas,px=0,py=0,stride=width;
  if(view!=='atlas'){
@@ -42,21 +53,21 @@ export function png(s,view='atlas'){
   const src=offset+((py+y)*stride+px+x)*4,dst=y*(width*4+1)+1+x*4;
   data[dst]=s.payload[src+2];data[dst+1]=s.payload[src+1];data[dst+2]=s.payload[src];data[dst+3]=255;
  }
- const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(width);ihdr.writeUInt32BE(height,4);ihdr[8]=8;ihdr[9]=6;
- return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),pngChunk('IHDR',ihdr),pngChunk('IDAT',deflateSync(data)),pngChunk('IEND',Buffer.alloc(0))]);
+ return pngRows(width,height,data);
 }
 export async function start({port=8900,streamPort=8901,root=path.dirname(fileURLToPath(import.meta.url))}={}){
  const history=new Map(),pinned=new Map(),held=new Map(),clients=new Set(),requests=new Map(),viewers=new Map(),pinVersions=new Map();
- let latest,bridge,received=0,invalid=0,dropped=0,startTime=Date.now(),lastFrameAt=0,lastStream,producerEpoch=0,latestEpoch=-1;
+ let latest,latestIdentity,identityFrames=0,identityBytes=0,bridge,received=0,invalid=0,dropped=0,startTime=Date.now(),lastFrameAt=0,lastStream,producerEpoch=0,latestEpoch=-1;
  const cadence=[];
  const encoder=new WordRuns();let streamBytes=0,sourceBytes=0,pipelineMs=0;
  const token=randomUUID();
- const notes=new Annotations(root,png),snapshotWaiters=new Map();
- const stats=()=>({received,invalid,dropped,source_fps:received/((Date.now()-startTime)/1000),lastFrameAgeMs:lastFrameAt?Date.now()-lastFrameAt:null,bridge:!!bridge,streamPort,latest:latest?.meta.id,retained:history.size,pinned:pinned.size,held:held.size,streamBytes,sourceBytes,pipelineMs,pending:[...requests.values()].map(r=>r.action),emulatedFps:cadence.length>1&&!latest?.meta.paused?(cadence.at(-1).frame-cadence[0].frame)/((cadence.at(-1).at-cadence[0].at)/1000):0,viewers:[...viewers.values()].filter(v=>Date.now()-v.at<10000)});
+ const notes=new Annotations(root,png),catalog=new Catalog(root),snapshotWaiters=new Map();
+ const stats=()=>({received,invalid,dropped,identityFrames,identityBytes,source_fps:received/((Date.now()-startTime)/1000),lastFrameAgeMs:lastFrameAt?Date.now()-lastFrameAt:null,bridge:!!bridge,streamPort,latest:latest?.meta.id,retained:history.size,pinned:pinned.size,held:held.size,streamBytes,sourceBytes,pipelineMs,pending:[...requests.values()].map(r=>r.action),emulatedFps:cadence.length>1&&!latest?.meta.paused?(cadence.at(-1).frame-cadence[0].frame)/((cadence.at(-1).at-cadence[0].at)/1000):0,viewers:[...viewers.values()].filter(v=>Date.now()-v.at<10000)});
  const sessionStatus=()=>{const age=lastFrameAt?Date.now()-lastFrameAt:null,current=!!bridge&&latestEpoch===producerEpoch,live=current?latest?.meta:null;return {server:true,producerConnected:!!bridge,producerEpoch,live,lastCapture:latest?{id:latest.meta.id,frame:latest.meta.frame,ageMs:age,nativeValid:!!latest.meta.raster?.valid,fromCurrentProducer:current,stale:!current||age>2000}:null};};
  const publish=s=>{
   if(s.meta.type==='reply'){const r=requests.get(s.meta.requestId);if(r){clearTimeout(r.timer);requests.delete(s.meta.requestId);r.resolve(s.meta);}return;}
   latest=s;latestEpoch=producerEpoch;received++;lastFrameAt=Date.now();history.set(s.meta.id,s);while(history.size>16)history.delete(history.keys().next().value);
+  if(s.meta.sampleIdentity?.length){latestIdentity=s;identityFrames++;identityBytes+=s.meta.sampleIdentity.length;}
   if(!s.meta.paused){if(cadence.length&&s.meta.frame<=cadence.at(-1).frame)cadence.length=0;cadence.push({frame:s.meta.frame,at:Date.now()});while(cadence.length>1&&cadence[0].at<Date.now()-2000)cadence.shift();}else cadence.length=0;
   for(const resolve of snapshotWaiters.get(s.meta.id)??[])resolve(s);snapshotWaiters.delete(s.meta.id);
   const started=performance.now();lastStream=streamPacket(s,encoder);streamBytes+=lastStream.length;sourceBytes+=s.packet.length;pipelineMs=performance.now()-started;
@@ -64,13 +75,13 @@ export async function start({port=8900,streamPort=8901,root=path.dirname(fileURL
   for(const c of clients){if(c.pendingFrames>=6){dropped++;continue;}c.pendingFrames++;c.write(msg,()=>{c.pendingFrames--;});}
  };
  const ingest=net.createServer(socket=>{
-  if(bridge){socket.destroy();return;}bridge=socket;producerEpoch++;cadence.length=0;socket.setNoDelay(true);
+  if(bridge){socket.destroy();return;}bridge=socket;producerEpoch++;latestIdentity=null;cadence.length=0;socket.setNoDelay(true);
   const framer=new Framer(publish);
   socket.on('data',b=>{try{framer.push(b);}catch{invalid++;socket.destroy();}});
   socket.on('error',()=>{});socket.on('close',()=>{if(bridge===socket)bridge=null;for(const r of requests.values()){clearTimeout(r.timer);r.reject(Error('Emulator bridge disconnected'));}requests.clear();});
  });
  const getSnapshot=(params,pin=false)=>{
-  const id=params.get('snapshot');const s=id?(pinned.get(id)||history.get(id)||[...held.values()].find(s=>s.meta.id===id)):latest;
+  const id=params.get('snapshot');const s=id?(pinned.get(id)||history.get(id)||(latestIdentity?.meta.id===id?latestIdentity:null)||[...held.values()].find(s=>s.meta.id===id)):latest;
   if(!s)throw Object.assign(Error('Snapshot is unavailable or expired'),{status:404});
   if(pin){pinned.delete(s.meta.id);pinned.set(s.meta.id,s);while(pinned.size>16)pinned.delete(pinned.keys().next().value);}
   return s;
@@ -85,11 +96,28 @@ export async function start({port=8900,streamPort=8901,root=path.dirname(fileURL
   const done=s=>{clearTimeout(timer);resolve(s);},timer=setTimeout(()=>{const list=snapshotWaiters.get(id);if(list){const i=list.indexOf(done);if(i>=0)list.splice(i,1);if(!list.length)snapshotWaiters.delete(id);}reject(Error('Rendered snapshot did not arrive'));},5000);
   snapshotWaiters.set(id,[...(snapshotWaiters.get(id)??[]),done]);
  });
- const allowed=new Set(['pause','resume','speed','step','record','movie-save','movie-stop','play','checkpoint-save','checkpoint-load','tastudio','capture-rate','raster-enable','state-hash','load-rom','movie-inputs','shutdown']);
+ const allowed=new Set(['pause','resume','speed','step','record','movie-save','movie-stop','play','checkpoint-save','checkpoint-load','tastudio','capture-rate','raster-enable','catalog-capture','state-hash','load-rom','movie-inputs','shutdown']);
  const safeHost=h=>h===`127.0.0.1:${server.address()?.port}`||h===`localhost:${server.address()?.port}`;
  const evidence=async(p,prefix='')=>p.get(prefix+'Note')?notes.snapshot(p.get(prefix+'Note')):getSnapshot(new URLSearchParams({snapshot:p.get(prefix)||p.get('snapshot')||''}),true);
+ const catalogEvidence=async p=>{
+  if(p.get('live')!=='1')return evidence(p);
+  if(!bridge||latestEpoch!==producerEpoch||!latest||Date.now()-lastFrameAt>2000)
+   throw Object.assign(Error('No current emulator capture'),{status:422});
+  if(p.get('evidence')!=='fastppu-sample-v1')return latest;
+  if(latestIdentity&&latest.meta.catalogContext?.enabled&&latest.meta.raster?.valid&&
+     latest.meta.sampleIdentity?.status!=='geometry-unsupported'&&
+     selectionContext(latest.meta)===selectionContext(latestIdentity.meta)&&
+     latest.meta.frame>=latestIdentity.meta.frame&&latest.meta.frame-latestIdentity.meta.frame<=8)return latestIdentity;
+  throw Object.assign(Error(identityReason(latest.meta)),{status:422});
+ };
+ const catalogEntry=async(s,id,revision,cached=false)=>{
+  const doc=await catalog.read(s.meta,{cached}),entry=doc.entries.find(e=>e.id===id);
+  if(!entry)throw Object.assign(Error('Catalog entry is unavailable for this ROM and core'),{status:404});
+  if(revision!==undefined&&entry.revision!==revision)throw Object.assign(Error('Catalog entry changed. Reload before using it.'),{status:409});
+  return entry;
+ };
  const exportBundle=async(s,noteId=null)=>{
-  if(noteId){const note=await notes.get(noteId),names=['capture.bin','memory.bin','atlas.png','composite.png','snapshot.json','annotation.json','comment.md',...(note.movie.archived?['movie.bk2']:[])],files=Object.fromEntries(await Promise.all(names.map(async n=>[n,await notes.file(noteId,n)])));return investigation(files,s.meta,note);}
+  if(noteId){const note=await notes.get(noteId),names=['capture.bin','memory.bin','atlas.png','composite.png','snapshot.json','annotation.json','comment.md',...(note.movie.archived?['movie.bk2']:[]),...(note.catalog?['catalog.json','catalog.png']:[])],files=Object.fromEntries(await Promise.all(names.map(async n=>[n,await notes.file(noteId,n)])));return investigation(files,s.meta,note);}
   return investigation({'capture.bin':s.packet,'memory.bin':s.payload.subarray(0,s.meta.atlas.offset),'atlas.png':png(s),'composite.png':png(s,'composite'),'snapshot.json':JSON.stringify(s.meta,null,2),'note.md':'Unannotated evidence capture. Create a frame comment to attach notes and an archived movie version.\n'},s.meta);
  };
  const checkpointList=async()=>Promise.all((await readdir(path.join(root,'checkpoints')).catch(()=>[])).filter(n=>n.endsWith('.State.json')).map(async filename=>{
@@ -106,10 +134,19 @@ export async function start({port=8900,streamPort=8901,root=path.dirname(fileURL
    if(origin&&origin!==`http://${req.headers.host}`)return json({error:'Invalid Origin'},403);
    const url=new URL(req.url,`http://${req.headers.host}`),p=url.searchParams;
    const noteRoute=url.pathname.match(/^\/api\/annotations\/([a-f0-9-]{36})(?:\/([a-z0-9.-]+))?$/);
+   if(req.method==='POST'&&url.pathname==='/api/catalog'){
+    if(req.headers['x-rea-token']!==token)return json({error:'Missing control token'},403);
+    if(!(req.headers['content-type']??'').startsWith('application/json'))return json({error:'Expected JSON'},415);
+    let body='';for await(const chunk of req){body+=chunk;if(body.length>540000)throw Error('Catalog request too large');}
+    const input=JSON.parse(body);
+    if(typeof input.snapshot!=='string'&&typeof input.annotation!=='string')throw Error('Catalog changes require an exact capture');
+    const s=await evidence(new URLSearchParams(input.annotation?{Note:input.annotation}:{snapshot:input.snapshot}));
+    return json(await catalog.change(s,input));
+   }
    if(req.method==='POST'&&['/api/pin','/api/unpin'].includes(url.pathname)){
     if(req.headers['x-rea-token']!==token)return json({error:'Missing control token'},403);
     let body='';for await(const b of req){body+=b;if(body.length>4096)throw Error('Pin request too large');}const c=JSON.parse(body);
-    if(!/^[a-f0-9-]{36}$/.test(c.owner)||!['evidence','baseline'].includes(c.slot)||!Number.isSafeInteger(c.generation)||c.generation<0)throw Error('Invalid evidence lease');
+    if(!/^[a-f0-9-]{36}$/.test(c.owner)||!['evidence','baseline','catalog'].includes(c.slot)||!Number.isSafeInteger(c.generation)||c.generation<0)throw Error('Invalid evidence lease');
     const key=c.owner+':'+c.slot,previous=pinVersions.get(key)??-1;if(c.generation<previous)return json({error:'Superseded pin request'},409);
     if(url.pathname==='/api/unpin'){pinVersions.set(key,c.generation);held.delete(key);return json({ok:true});}
     const s=getSnapshot(new URLSearchParams({snapshot:c.snapshot}));if(!held.has(key)&&held.size>=16)return json({error:'Evidence lease limit reached; release an existing lease'},429);
@@ -125,16 +162,34 @@ export async function start({port=8900,streamPort=8901,root=path.dirname(fileURL
     else if(input.snapshot)s=getSnapshot(new URLSearchParams({snapshot:input.snapshot}),true);
     else {const reply=await sendCommand({action:'pause'});if(!reply.ok)throw Error(reply.result?.error??'Pause failed');s=await waitSnapshot(reply.result.snapshot);}
     if(!s.meta.raster?.valid)throw Error('Render a complete native frame before commenting');
-    let movieCopy=input.annotation&&(await notes.get(input.annotation)).movie.archived?await notes.file(input.annotation,'movie.bk2'):null;
+    const previous=input.annotation?await notes.get(input.annotation):null;
+    let attachment=null;
+    if(input.catalog){
+     if(!input.snapshot&&!input.annotation)throw Error('Catalog observations require an exact capture');
+     const entry=await catalogEntry(s,input.catalog.id,input.catalog.revision);
+     if(!Number.isInteger(input.catalog.revision))throw Error('Catalog revision is required');
+     const result=isolate(s,entry,input.catalog);
+     attachment={record:observation(s,entry,result),png:catalogPng(result)};
+    }else if(previous?.catalog){
+     attachment={record:previous.catalog,png:await notes.file(previous.id,'catalog.png')};
+    }
+    let movieCopy=previous?.movie.archived?await notes.file(input.annotation,'movie.bk2'):null;
     if(s.meta.movie?.loaded&&!movieCopy){
-     const filename=s.meta.movie.filename,base=filename.split(/[\\/]/).at(-1),local=path.resolve(root,'movies',base);
+     const filename=s.meta.movie.filename,base=filename.split(/[\\/]/).at(-1);
      const same=latest?.meta.movie?.filename===filename&&latest?.meta.movie?.rerecords===s.meta.movie.rerecords;
-     if(same&&latest.meta.movie.mode==='RECORD'){
+     if(same&&bridge&&latestEpoch===producerEpoch&&latest.meta.movie.mode==='RECORD'){
       const saved=await sendCommand({action:'movie-save'});if(!saved.ok)throw Error(saved.result?.error??'Movie save failed');await waitSnapshot(saved.result.snapshot);
      }
-     if(same&&path.resolve(filename).toLowerCase()===local.toLowerCase()&&base.endsWith('.bk2'))movieCopy=await readFile(local);
+     if((same||s.meta.movie.loadedSha256)&&base.endsWith('.bk2')){
+      try{
+       const directory=await realpath(path.join(root,'movies'));
+       const local=await realpath(path.join(directory,base));
+       if(path.dirname(local)===directory&&await realpath(filename)===local)movieCopy=await readFile(local);
+      }catch(e){if(e.code!=='ENOENT')throw e;}
+     }
     }
-    return json(await notes.capture(s,movieCopy),201);
+    if(movieCopy&&s.meta.movie?.loadedSha256&&createHash('sha256').update(movieCopy).digest('hex')!==s.meta.movie.loadedSha256)movieCopy=null;
+    return json(await notes.capture(s,movieCopy,attachment),201);
    }
    if(req.method==='POST'&&url.pathname==='/api/viewer'){
     let body='';for await(const b of req){body+=b;if(body.length>8192)throw Error('Viewer metrics too large');}
@@ -166,14 +221,36 @@ export async function start({port=8900,streamPort=8901,root=path.dirname(fileURL
     res.writeHead(200,{'Content-Type':mime,...(file.endsWith('.bin')||file.endsWith('.bk2')?{'Content-Disposition':`attachment; filename="${file}"`}:{})});return res.end(bytes);
    }
    switch(url.pathname){
-    case '/api/session':return json({token,status:sessionStatus(),capabilities:{movies:true,frameStep:true,checkpoints:true,...latest?.meta.capabilities},features:{execution:{support:'supported',stopGranularity:'completed frame',maxFrames:3600,speeds:[10,25,50,75,100,150,200,400]},evidence:{support:'supported',pinning:true,savedReview:true,exports:['capture','investigation ZIP']},checkpoints:{support:'supported',lifetime:'persistent disk',compatibility:['ROM','core','version','sync settings','native binary when recorded']},trace:{support:'unsupported',reason:'No bounded instruction-trace service is implemented by the REA BSNES bridge; native debugger availability depends on the core.'},watch:{support:'unsupported',reason:'No CPU breakpoint/watch service is exposed. Copied memory can be compared without hardware-port reads.'},collision:{support:'unsupported',reason:'No verified ROM-specific collision adapter is installed. OAM bounds are hardware diagnostics, not game hitboxes.'}},metrics:stats()});
+    case '/api/catalog':return json(await catalog.read((await evidence(p)).meta));
+    case '/api/catalog/current':{
+     const {meta}=await catalogEvidence(p);
+     return json({snapshot:meta.id,frame:meta.frame,context:selectionContext(meta)});
+    }
+    case '/api/catalog/pick':{
+     if(!p.has('x')||!p.has('y'))throw Error('Pick coordinates are required');
+     const s=await evidence(p),layer=p.get('layer')??'composite',x=Number(p.get('x')),y=Number(p.get('y'));
+     return json({snapshot:s.meta.id,choices:sampleChoices(s,{layer,x,y,screen:p.get('screen')??'displayed'})});
+    }
+    case '/api/catalog/seed':{
+     const s=await evidence(p),evidenceClass=p.get('evidence'),kind=p.get('kind');
+     const slot=p.has('slot')?Number(p.get('slot')):null,tile=p.has('tile')?Number(p.get('tile')):null;
+     return json(pick(s,{evidence:evidenceClass,slot,tile},kind));
+    }
+    case '/api/catalog/view':{
+     const s=await catalogEvidence(p),rev=p.get('revision'),entry=await catalogEntry(s,p.get('id'),rev===null?undefined:Number(rev),true);
+     if(p.get('since')===s.meta.id)return json({unchanged:true});
+     const result=isolate(s,entry,{evidence:p.get('evidence'),layer:p.get('layer'),instance:p.get('instance'),screen:p.get('screen')??'displayed'},false);
+     const {pixels,...info}=result;
+     return json({...info,image:catalogPng(result).toString('base64')});
+    }
+    case '/api/session':return json({token,status:sessionStatus(),capabilities:{movies:true,frameStep:true,checkpoints:true,...latest?.meta.capabilities},features:{execution:{support:'supported',stopGranularity:'completed frame',maxFrames:3600,speeds:[10,25,50,75,100,150,200,400]},evidence:{support:'supported',pinning:true,savedReview:true,exports:['capture','investigation ZIP']},checkpoints:{support:'supported',lifetime:'persistent disk',compatibility:['ROM','core','version','sync settings','native binary when recorded']},catalog:{support:'supported',schema:1,nativeAvailable:!!latest?.meta.catalogContext?.available,samplingInterval:4,evidence:['fastppu-sample-v1','oam-vram-diagnostic','vram-tile-diagnostic']},trace:{support:'unsupported',reason:'No bounded instruction-trace service is implemented by the REA BSNES bridge; native debugger availability depends on the core.'},watch:{support:'unsupported',reason:'No CPU breakpoint/watch service is exposed. Copied memory can be compared without hardware-port reads.'},collision:{support:'unsupported',reason:'No verified ROM-specific collision adapter is installed. OAM bounds are hardware diagnostics, not game hitboxes.'}},metrics:stats()});
     case '/api/metrics':return json(stats());
     case '/api/history':return json([...history.values()].map(s=>({id:s.meta.id,frame:s.meta.frame})));
     case '/api/movies':return json((await readdir(path.join(root,'movies')).catch(()=>[])).filter(n=>n.endsWith('.bk2')));
     case '/api/checkpoints':return json(await checkpointList());
     case '/api/export':{const s=await evidence(p);res.writeHead(200,{'Content-Type':'application/zip','Content-Disposition':`attachment; filename="rea-evidence-${s.meta.frame}.zip"`});return res.end(await exportBundle(s,p.get('Note')));}
     case '/api/compare':{const a=await evidence(p,'from'),b=await evidence(p,'to'),space=p.get('space')??'WRAM',reason=comparisonReason(a.meta,b.meta,space);if(reason)throw Error(reason);const start=Number(p.get('start')??0),length=Number(p.get('length')??128),x=range(a.meta,a.payload,space,start,length).bytes,y=range(b.meta,b.payload,space,start,length).bytes;return json({from:{id:a.meta.id,frame:a.meta.frame},to:{id:b.meta.id,frame:b.meta.frame},space,start,length,beforeHex:x.toString('hex'),afterHex:y.toString('hex'),changes:[...x].flatMap((v,i)=>v===y[i]?[]:[{offset:start+i,before:v,after:y[i]}])});}
-    case '/api/annotations':return json((await notes.list()).filter(n=>(!p.get('rom')||n.snapshot.rom.hash===p.get('rom'))&&(!p.get('movie')||n.movie.filename===p.get('movie'))).map(({body,domains,files,...n})=>n));
+    case '/api/annotations':return json((await notes.list()).filter(n=>(!p.get('rom')||n.snapshot.rom.hash===p.get('rom'))&&(!p.get('movie')||n.movie.filename===p.get('movie'))).map(({body,domains,files,catalog,...n})=>n));
     case '/api/snapshot':{const s=getSnapshot(p,true);return json(s.meta);}
     case '/api/live':{const s=getSnapshot(p);res.writeHead(200,{'Content-Type':'application/octet-stream'});return res.end(s.packet);}
     case '/api/memory':{
@@ -191,7 +268,7 @@ export async function start({port=8900,streamPort=8901,root=path.dirname(fileURL
     case '/api/pixel':{const s=getSnapshot(p,true);return json(inspectPixel(s,p.get('view')??'composite',Number(p.get('x')),Number(p.get('y'))));}
     case '/api/image':{const s=getSnapshot(p,true);res.writeHead(200,{'Content-Type':'image/png'});return res.end(png(s,p.get('view')??'atlas'));}
     default:{
-     const file={'/':'index.html','/app.mjs':'app.mjs','/transport.mjs':'transport.mjs','/model.mjs':'model.mjs','/memory.mjs':'memory.mjs','/renderer.mjs':'renderer.mjs','/notes.mjs':'notes.mjs','/vendor/note-renderer.mjs':'vendor/note-renderer.mjs','/vendor/note-renderer.mjs.LEGAL.txt':'vendor/note-renderer.mjs.LEGAL.txt','/style.css':'style.css'}[url.pathname];
+     const file={'/':'index.html','/app.mjs':'app.mjs','/transport.mjs':'transport.mjs','/model.mjs':'model.mjs','/memory.mjs':'memory.mjs','/renderer.mjs':'renderer.mjs','/notes.mjs':'notes.mjs','/catalog.mjs':'catalog.mjs','/catalog-follow.mjs':'catalog-follow.mjs','/vendor/note-renderer.mjs':'vendor/note-renderer.mjs','/vendor/note-renderer.mjs.LEGAL.txt':'vendor/note-renderer.mjs.LEGAL.txt','/style.css':'style.css'}[url.pathname];
      if(!file)return json({error:'Not found'},404);
      res.writeHead(200,{'Content-Type':file.endsWith('.mjs')?'text/javascript':file.endsWith('.css')?'text/css':file.endsWith('.txt')?'text/plain; charset=utf-8':'text/html'});return res.end(await readFile(path.join(root,'public',file)));
     }
@@ -209,7 +286,12 @@ export async function start({port=8900,streamPort=8901,root=path.dirname(fileURL
  try{await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});}catch(e){ingest.close();throw e;}
  return {server,ingest,publish,stats,close:async()=>{for(const c of clients)c.destroy();bridge?.destroy();await Promise.all([new Promise(r=>server.close(r)),new Promise(r=>ingest.close(r))]);},port:server.address().port,streamPort:ingest.address().port};
 }
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+function isEntryPoint(){
+ if(!process.argv[1])return false;
+ try{return realpathSync(process.argv[1])===realpathSync(fileURLToPath(import.meta.url));}
+ catch{return false;}
+}
+if(isEntryPoint()){
  const app=await start({port:Number(process.env.REA_SNES_HTTP_PORT??8900),streamPort:Number(process.env.REA_SNES_STREAM_PORT??8901)});
  console.log(JSON.stringify({url:`http://127.0.0.1:${app.port}`,streamPort:app.streamPort}));
  for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{await app.close();process.exit();});

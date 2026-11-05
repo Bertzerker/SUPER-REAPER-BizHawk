@@ -29,6 +29,24 @@ Eleven contiguous uint32 LE planes: Composite; BG1 main/sub; BG2 main/sub; BG3 m
 
 The tool copies this block into immutable snapshot memory. It invalidates evidence on state load and detects emulated frames with no newly rendered PPU output. This is raster sample evidence; exact fetch-address/CPU provenance remains unavailable.
 
+## Catalog identity planes
+
+Optional region `0x52454103` exposes ten planar uint64 LE identity planes for BG1 main/sub through BG4 main/sub, then OBJ main/sub. The original 64-byte header and color plane ABI remain version 1. Header byte offset 60 now has flags for requested (bit 0), published (bit 1) and unsupported geometry (bit 2). Readers use this field only if the identity region exists. A published plane uses the same 256-pixel coordinates, crop and generation as its color packet.
+
+Bit 63 marks a captured source. Bits 0–14 hold the 15-bit pattern base in VRAM words. Bits 15–29 hold the BG map word or OBJ slot. Bits 32–39 carry the CGRAM base or direct-color palette bits. Bits 40–43 hold depth, 44–45 hold flips, 46–48 hold the BG mode and 49 marks direct color. BG identity follows the exact lookup and mosaic latch. OBJ identity follows the renderer’s tile evaluation and pixel winner. Main/sub admission uses the same windows, priority and brightness as the native layer samples.
+
+Catalog sampling uses separate invisible scratch buffers and is off by default. It publishes one in four eligible renders for non-interlaced 256-pixel FastPPU Modes 0–4. Waterbox state restore, reset and power invalidate published data, including TAStudio’s direct state restore path through `snes_msu_sync`. Older identity-free captures still support color inspection and memory diagnostics. The managed bridge keeps the added planes out of normal browser streaming.
+
+Use the original catalog diagnostic and the native acceptance runner against the single REA emulator instance:
+
+```powershell
+& 'C:/path/to/installed/python.exe' ./snes/rea/make_test_rom.py --catalog
+./snes/rea/Start-REA.ps1 -Rom ./snes/rea/test-output/rea-catalog.sfc -Paused -Mute
+node ./snes/rea/verify_catalog_live.mjs http://127.0.0.1:8900
+```
+
+The runner compares tracking-off/on raw savestate and atlas hashes, grows animation/tile entries from native samples, exercises motion, palette and visibility changes, then checks BK2 playback and the saved catalog attachment. Run `measure_live.mjs` with native catalog sampling off and on to compare identity traffic, capture cost and drops.
+
 ## Build
 
 WSL Ubuntu prerequisites: make, cmake, git, unzip, clang-18, lld-18, llvm and zstd. Compilation is limited to two jobs. The persistent cache is `$HOME/.cache/rea-snes-waterbox-2.11.1`.

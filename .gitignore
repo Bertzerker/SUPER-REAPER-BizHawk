@@ -22,6 +22,7 @@ snes/emulator/
 snes/upstream/
 snes/roms/
 snes/rea/session/
+snes/rea/catalogs/
 snes/rea/annotations/
 snes/rea/checkpoints/
 snes/rea/movies/

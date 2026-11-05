@@ -51,6 +51,10 @@ namespace REASnes {
   string stepCommand;
   ISNESGraphicsDecoder decoder;
   NativeRaster raster;
+  bool catalogCapture;
+  int catalogEpoch;
+  string verifiedMoviePath, verifiedMovieHash;
+  ulong verifiedMovieRerecords;
   bool rasterEnabled=Environment.GetEnvironmentVariable("REA_SNES_RASTER_CAPTURE")!="0";
   IEmuClientApi watchedClient;
   long lastRenderGeneration=-1;
@@ -68,7 +72,7 @@ namespace REASnes {
    FormClosed += (_,__) => { closed=true; timer.Stop(); ready.Set();if(watchedClient!=null)watchedClient.StateLoaded-=StateLoaded; };
   }
   public override void Restart() {
-   decoder=null;raster=null;syncCache=null;
+   decoder=null;raster=null;syncCache=null;catalogEpoch++;
    lastRenderGeneration=-1;lastRenderFrame=-1;WatchStates();
    // Frame numbers can rewind; session + sequence remains unique.
    lastCapture=0;
@@ -78,7 +82,7 @@ namespace REASnes {
    if(watchedClient!=null)watchedClient.StateLoaded-=StateLoaded;
    watchedClient=_apiContainer.EmuClient;watchedClient.StateLoaded+=StateLoaded;
   }
-  void StateLoaded(object sender,StateLoadedEventArgs e) {raster?.Invalidate();lastRenderFrame=-1;}
+  void StateLoaded(object sender,StateLoadedEventArgs e) {raster?.Invalidate();lastRenderFrame=-1;catalogEpoch++;}
   void Tick() {
    if (_apiContainer==null || Emulator==null) return;
    while (commands.TryDequeue(out var c)) {
@@ -161,6 +165,7 @@ namespace REASnes {
      if(_apiContainer.Movie.IsLoaded()) throw new InvalidOperationException("Save/stop the current movie before recording another");
      string path=LocalPath("movies", (string)c["name"], ".bk2");
      if(File.Exists(path)) throw new IOException("Movie already exists");
+     verifiedMoviePath=null;verifiedMovieHash=null;catalogEpoch++;
      var movie=MovieSession.Get(path, false); movie.Author=(string)c["author"]??"REA";
      if((string)c["start"]=="checkpoint") {
       movie.StartsFromSavestate=true;
@@ -172,8 +177,9 @@ namespace REASnes {
     case "movie-save":
      if(!_apiContainer.Movie.IsLoaded()) throw new InvalidOperationException("No active movie");
      _apiContainer.Movie.Save(); break;
-    case "movie-stop": _apiContainer.Movie.Stop(true); break;
+    case "movie-stop": _apiContainer.Movie.Stop(true);verifiedMoviePath=null;verifiedMovieHash=null;catalogEpoch++;break;
     case "play": {
+     catalogEpoch++;
      if(_apiContainer.Movie.IsLoaded()) {
       if(_apiContainer.Movie.Mode()=="RECORD")throw new InvalidOperationException("Save/stop the recording before loading another movie");
       _apiContainer.Movie.Stop(true);
@@ -181,7 +187,13 @@ namespace REASnes {
      string path=LocalPath("movies", (string)c["name"], ".bk2");
      if(!File.Exists(path)) throw new IOException("Movie does not exist");
      _apiContainer.Movie.SetReadOnly(true);
-     if(!_apiContainer.Movie.PlayFromStart(path)) throw new InvalidOperationException("Movie load failed");
+     verifiedMoviePath=null;verifiedMovieHash=null;
+     using(var file=File.OpenRead(path))
+     using(var sha=SHA256.Create()) {
+      string hash=BitConverter.ToString(sha.ComputeHash(file)).Replace("-","").ToLowerInvariant();
+      if(!_apiContainer.Movie.PlayFromStart(path)) throw new InvalidOperationException("Movie load failed");
+      verifiedMoviePath=path;verifiedMovieHash=hash;verifiedMovieRerecords=_apiContainer.Movie.GetRerecordCount();
+     }
      _apiContainer.EmuClient.Pause(); break;
     }
     case "checkpoint-save": {
@@ -202,10 +214,21 @@ namespace REASnes {
      _apiContainer.EmuClient.Pause(); break;
     }
     case "tastudio": _apiContainer.Tool.OpenTasStudio(); break;
-    case "capture-rate": every=(int?)c["every"]??1; if(every<1 || every>60) {every=1;throw new ArgumentException("every must be 1..60");} break;
+    case "capture-rate": {
+     int requested=(int?)c["every"]??1;
+     if(requested<1||requested>60)throw new ArgumentException("every must be 1..60");
+     if(catalogCapture&&requested!=1)throw new InvalidOperationException("Disable native catalog sampling before reducing capture cadence");
+     every=requested;break;
+    }
     case "raster-enable":
      if(c["enabled"]?.Type!=JTokenType.Boolean)throw new ArgumentException("enabled must be a boolean");
      rasterEnabled=(bool)c["enabled"];if(raster==null)raster=new NativeRaster(Emulator,rasterEnabled);else raster.SetEnabled(rasterEnabled);break;
+    case "catalog-capture":
+     if(c["enabled"]?.Type!=JTokenType.Boolean)throw new ArgumentException("Catalog capture needs a Boolean enabled value");
+     if((bool)c["enabled"]&&every!=1)throw new InvalidOperationException("Native catalog sampling requires capture every rendered frame");
+     if(raster==null)raster=new NativeRaster(Emulator,rasterEnabled);
+     if(!raster.IdentityAvailable)throw new InvalidOperationException("Native catalog capture core is unavailable");
+     catalogCapture=(bool)c["enabled"];raster.SetIdentity(catalogCapture);catalogEpoch++;break;
     case "state-hash": {
      if(!_apiContainer.EmuClient.IsPaused())throw new InvalidOperationException("Pause before hashing core state");
      using(var sha=SHA256.Create()) Reply(c,true,new {frame=Emulator.Frame,sha256=BitConverter.ToString(sha.ComputeHash(Emulator.AsStatable().CloneSavestate())).Replace("-","")});
@@ -256,11 +279,11 @@ namespace REASnes {
     work.Blocks.Clear();work.MemoryLength=0;
     bool fastGraphics=MemoryDomains.Any(d=>d.Name=="VRAM" && d.Size>0);
     if(fastGraphics && decoder==null)decoder=Gfx.CreateGraphicsDecoder();
-    if(raster==null)raster=new NativeRaster(Emulator,rasterEnabled);
+    if(raster==null){raster=new NativeRaster(Emulator,rasterEnabled);raster.SetIdentity(catalogCapture);}
     var rendered=raster.Read(work.Raster);
     if(rendered.Ready) {
      if(rendered.Generation!=lastRenderGeneration){lastRenderGeneration=rendered.Generation;lastRenderFrame=Emulator.Frame;}
-     else if(Emulator.Frame!=lastRenderFrame){rendered.Ready=false;rendered.WordCount=0;rendered.Reason="No new PPU output at this emulated frame";}
+     else if(Emulator.Frame!=lastRenderFrame){rendered.Ready=false;rendered.WordCount=0;rendered.IdentityWords=0;rendered.IdentityStatus="waiting-render";rendered.Reason="No new PPU output at this emulated frame";}
     }
     var video=Emulator.AsVideoProvider();
     int vw=rendered.Ready?rendered.Width:video.BufferWidth,vh=rendered.Ready?rendered.Height:video.BufferHeight;
@@ -275,13 +298,18 @@ namespace REASnes {
     }
     work.Screen=new GD.ScreenInfo();if(fastGraphics)using(decoder.EnterExit())work.Screen=decoder.ScanScreenInfo();
     string id=session+"-"+(++sequence);stepLastSnapshot=id;bool movie=_apiContainer.Movie.IsLoaded();
+    string moviePath=movie?_apiContainer.Movie.Filename():"",movieMode=_apiContainer.Movie.Mode();
+    ulong movieRerecords=movie?_apiContainer.Movie.GetRerecordCount():0;
+    string movieHash=movie&&movieMode!="RECORD"&&movieRerecords==verifiedMovieRerecords&&
+     string.Equals(moviePath,verifiedMoviePath,StringComparison.OrdinalIgnoreCase)?verifiedMovieHash:null;
     work.Header=new Dictionary<string,object> {
      ["type"]="frame",["schema"]=1,["id"]=id,["session"]=session,["sequence"]=sequence,["frame"]=Emulator.Frame,
      ["rom"]=new {name=Game.Name,hash=Game.Hash},["core"]=Emulator.GetType().FullName,["version"]="2.11.1",["deterministic"]=Emulator.DeterministicEmulation,["mode"]=fastGraphics?(int?)work.Screen.Mode:null,
      ["paused"]=_apiContainer.EmuClient.IsPaused(),["lag"]=Emulator.AsInputPollable().IsLagFrame,
-     ["movie"]=new {loaded=movie,mode=_apiContainer.Movie.Mode(),filename=movie?_apiContainer.Movie.Filename():"",length=movie?_apiContainer.Movie.Length():0,timelineFrame=movie&&Emulator.Frame<=_apiContainer.Movie.Length()?(int?)Emulator.Frame:null,readOnly=_apiContainer.Movie.GetReadOnly(),rerecords=movie?_apiContainer.Movie.GetRerecordCount():0,startsFromCheckpoint=movie&&_apiContainer.Movie.StartsFromSavestate()},
+     ["movie"]=new {loaded=movie,mode=movieMode,filename=moviePath,length=movie?_apiContainer.Movie.Length():0,timelineFrame=movie&&Emulator.Frame<=_apiContainer.Movie.Length()?(int?)Emulator.Frame:null,readOnly=_apiContainer.Movie.GetReadOnly(),rerecords=movieRerecords,startsFromCheckpoint=movie&&_apiContainer.Movie.StartsFromSavestate(),loadedSha256=movieHash},
      ["playback"]=new {speedPercent=Config.SpeedPercent},
      ["identity"]=new {sync=syncCache??(syncCache=SyncIdentity()),native=nativeIdentity},
+     ["catalogContext"]=new {epoch=catalogEpoch,rasterEpoch=rendered.Epoch,enabled=catalogCapture,available=raster.IdentityAvailable},
      ["execution"]=new {pendingStep=steps>0,requestedFrames=stepRequested,completedFrames=steps>0?Emulator.Frame-stepStart:0},
      ["inputs"]=_apiContainer.Joypad.GetWithMovie(),["buttons"]=Emulator.ControllerDefinition.BoolButtons.ToArray(),
      ["domains"]=domains,["ppu"]=work.Screen,["nativeAvailable"]=raster.Available,["renderFrame"]=lastRenderFrame,

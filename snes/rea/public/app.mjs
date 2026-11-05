@@ -4,6 +4,7 @@ import {AtlasRenderer} from './renderer.mjs';
 import {SelectionRequest,actionReason,checkpointReason} from './model.mjs';
 import {setupMemory} from './memory.mjs';
 import {setupNotes} from './notes.mjs';
+import {setupCatalog} from './catalog.mjs';
 const $=id=>document.getElementById(id),text=(id,value)=>{const e=$(id),s=String(value??'');if(e.textContent!==s)e.textContent=s;};
 const owner=crypto.randomUUID(),decoder=new StreamDecoder(),selection=new SelectionRequest();
 let current,pending,frozen=false,saved=null,verified=false,pinPending=false,pinOperation=null,selected=null,baselineVersion=0;
@@ -92,11 +93,27 @@ function checkpointDetails(){const row=checkpointRows.find(r=>r.name===$('checkp
 $('checkpoint-list').onchange=checkpointDetails;$('refresh-checkpoints').onclick=()=>report(refreshCheckpoints);$('save-state').onclick=()=>report(async()=>{await control({action:'checkpoint-save',name:$('checkpoint-name').value});await refreshCheckpoints();});$('load-state').onclick=()=>report(async()=>{const name=$('checkpoint-list').value,row=checkpointRows.find(r=>r.name===name);if(!row)throw Error('Choose a compatible checkpoint');const reason=checkpointReason(row,live);if(reason)throw Error(reason);await control({action:'checkpoint-load',name});});
 $('experiment-form').onsubmit=e=>{e.preventDefault();report(async()=>{const frames=Number($('experiment-frames').value);if(!Number.isInteger(frames)||frames<1||frames>3600)throw Error('Experiment must be 1–3600 frames');const c={action:'step',frames};if(!$('experiment-movie').checked)c.buttons=Object.fromEntries([...document.querySelectorAll('[data-button]')].map(b=>[b.dataset.button,b.checked]));await control(c);});};$('experiment-movie').onchange=updateStatus;
 async function showSaved(note){const r=await fetch(`/api/annotations/${note.id}/capture.bin`);if(!r.ok)throw Error('Saved capture is unavailable or failed verification');const s=decoder.decode(await r.arrayBuffer());selection.invalidate();pinOperation=null;pinPending=false;clearQueue();decoder.release(pending);pending=null;saved=note.id;frozen=true;verified=true;selected=null;draw(s,false);memoryUI.changed();}
+async function inspectCatalogFrame(id){
+ const generation=selection.invalidate();
+ await pin({meta:{id}},'evidence',generation);
+ const response=await fetch('/api/live?'+new URLSearchParams({snapshot:id}),{signal:AbortSignal.timeout(10000)});
+ if(!response.ok)throw Error('Sampled frame is unavailable');
+ const capture=decoder.decode(await response.arrayBuffer());
+ if(generation!==selection.generation||capture.meta.id!==id){decoder.release(capture);throw Error('Evidence selection changed');}
+ clearQueue();pinOperation=null;pinPending=false;saved=null;frozen=true;verified=true;selected=null;
+ text('pixel','Choose a pixel on the sampled frame.');
+ text('selection-status','Catalog frame pinned · '+id);
+ draw(capture,false);memoryUI.changed();
+}
 memoryUI=setupMemory({api,context,url:evidenceUrl,pin,report});
 notesUI=setupNotes({api,getCurrent:()=>current,isFrozen:()=>frozen,getContext:context,pinDisplayed:holdDisplayed,inspectSaved:showSaved,onSaved:()=>memoryUI.refreshSaved(),openDrawer:()=>openTab('drawer','comments')});
+let catalogSeedGeneration=0;
+setupCatalog({api,post,context,live:()=>liveReady()?live:null,selection:()=>selected,holdDisplayed,
+ holdSeed:c=>pin(c,'catalog',++catalogSeedGeneration),inspectFrame:inspectCatalogFrame,
+ returnLive:resumeInspection,control,attach:body=>notesUI.captureCatalog(body)});
 $('export-evidence').onclick=()=>report(async()=>{let c=context();if(!c)throw Error('No displayed evidence');if(c.kind==='live')c=await holdDisplayed();const q=new URLSearchParams();q.set(c.saved?'Note':'snapshot',c.saved??c.meta.id);const r=await fetch('/api/export?'+q);if(!r.ok)throw Error((await r.json()).error);const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=url;a.download=`rea-evidence-${c.meta.frame}.zip`;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);text('message','Evidence ZIP downloaded with a hash manifest. It is not a restorable checkpoint.');});
 function connect(){const ws=new WebSocket(`ws://${location.host}/stream`);ws.binaryType='arraybuffer';ws.onopen=()=>{socketOpen=true;pollSession();};ws.onmessage=e=>{try{metrics.received++;const s=decoder.decode(e.data);live=s.meta;if(s.meta.paused||frozen){decoder.release(pending);pending=s;}else{queue.push(s);if(queue.length>10){decoder.release(queue.shift());metrics.replaced++;}}}catch(e){text('message','Capture decoding failed: '+e.message);}};ws.onclose=()=>{socketOpen=false;server=false;clearQueue();presenting=false;updateStatus();setTimeout(connect,1000);};ws.onerror=()=>ws.close();}
 setInterval(()=>{pollSession();const now=performance.now();while(presentations.length&&presentations[0]<now-2000)presentations.shift();const sorted=presentations.slice(1).map((v,i)=>v-presentations[i]).sort((a,b)=>a-b);metrics.rate=presentations.length/2;metrics.p95=sorted.length?sorted[Math.floor(sorted.length*.95)]:0;metrics.frozen=frozen;text('rate',`${metrics.rate.toFixed(1)} unique displayed captures/s · p95 ${metrics.p95.toFixed(1)} ms`);$('rate').dataset.displayed=metrics.displayed;$('rate').dataset.received=metrics.received;$('rate').dataset.replaced=metrics.replaced;text('performance',JSON.stringify({machineFps:session?.metrics.emulatedFps,nominalSourceFps:live?.timing?.fps,region:live?.timing?.region,displayedUniqueFps:metrics.rate,renderer:renderer.mode,queue:queue.length,replaced:metrics.replaced,source:session?.metrics},null,2));if(server)fetch('/api/viewer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:owner,received:metrics.received,displayed:metrics.displayed,replaced:metrics.replaced,lastFrame:metrics.lastFrame,rate:metrics.rate,p95:metrics.p95,frozen})}).catch(()=>{});},1000);
-window.addEventListener('pagehide',()=>{api('/api/session').then(({token})=>{for(const slot of ['evidence','baseline'])fetch('/api/unpin',{method:'POST',keepalive:true,headers:{'Content-Type':'application/json','X-REA-Token':token},body:JSON.stringify({owner,slot,generation:1000000000})}).catch(()=>{});}).catch(()=>{});});
+window.addEventListener('pagehide',()=>{api('/api/session').then(({token})=>{for(const slot of ['evidence','baseline','catalog'])fetch('/api/unpin',{method:'POST',keepalive:true,headers:{'Content-Type':'application/json','X-REA-Token':token},body:JSON.stringify({owner,slot,generation:1000000000})}).catch(()=>{});}).catch(()=>{});});
 updateStatus();pollSession();report(refreshMovies);report(refreshCheckpoints);report(()=>memoryUI.refreshSaved());connect();requestAnimationFrame(animate);
 

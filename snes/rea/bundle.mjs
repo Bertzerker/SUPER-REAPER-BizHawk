@@ -16,5 +16,6 @@ export function zip(files){
 export function investigation(files,meta,note=null){
  const payload={...files,'VERIFY.md':'Inspection evidence, not a restorable checkpoint. Verify each manifest.json file SHA256 and byte length before using evidence. Preserve ROM/core/movie versions for replay.\n'};
  const manifest={schema:1,type:'REA SNES investigation',inspectionSnapshot:true,restorableCheckpoint:false,capture:{id:meta.id,frame:meta.frame,rom:meta.rom,core:meta.core,version:meta.version,generation:meta.raster?.generation},annotation:note?{id:note.id,revision:note.revision}:null,files:Object.entries(payload).map(([name,bytes])=>({name,bytes:Buffer.byteLength(bytes),sha256:createHash('sha256').update(bytes).digest('hex')}))};
+ if(note?.catalog)manifest.catalog={id:note.catalog.entry.id,revision:note.catalog.entry.revision,evidence:note.catalog.evidence,snapshot:note.catalog.snapshot,selectorSha256:note.catalog.selectorSha256};
  return zip({...payload,'manifest.json':JSON.stringify(manifest,null,2)});
 }

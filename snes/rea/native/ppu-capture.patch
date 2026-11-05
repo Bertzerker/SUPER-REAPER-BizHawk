@@ -33,6 +33,111 @@
      ppubase.display.interlace = io.interlace;
      ppubase.display.overscan = io.overscan;
      latch.overscan = io.overscan;
+--- a/bsnes/sfc/ppu-fast/ppu.hpp
++++ b/bsnes/sfc/ppu-fast/ppu.hpp
+@@ -297,13 +297,14 @@
+     auto pixel(uint x, Pixel above, Pixel below) const -> uint16;
+     auto blend(uint x, uint y, bool halve) const -> uint16;
+     alwaysinline auto directColor(uint paletteIndex, uint paletteColor) const -> uint16;
+-    alwaysinline auto plotAbove(uint x, uint8 source, uint8 priority, uint16 color) -> void;
+-    alwaysinline auto plotBelow(uint x, uint8 source, uint8 priority, uint16 color) -> void;
++    alwaysinline auto plotAbove(uint x, uint8 source, uint8 priority, uint16 color, uint64 identity = 0) -> void;
++    alwaysinline auto plotBelow(uint x, uint8 source, uint8 priority, uint16 color, uint64 identity = 0) -> void;
+     alwaysinline auto plotHD(Pixel*, uint x, uint8 source, uint8 priority, uint16 color, bool hires, bool subpixel) -> void;
+ 
+     //background.cpp
+     auto renderBackground(PPU::IO::Background&, uint8 source) -> void;
+     auto getTile(PPU::IO::Background&, uint hoffset, uint voffset) -> uint;
++    auto tileMapWord(PPU::IO::Background&, uint hoffset, uint voffset) -> uint;
+ 
+     //mode7.cpp
+     auto renderMode7(PPU::IO::Background&, uint8 source) -> void;
+--- a/bsnes/sfc/ppu-fast/background.cpp
++++ b/bsnes/sfc/ppu-fast/background.cpp
+@@ -41,6 +41,7 @@
+   uint mosaicPalette = 0;
+   uint8 mosaicPriority = 0;
+   uint16 mosaicColor = 0;
++  uint64 mosaicIdentity = 0;
+ 
+   int x = 0 - (hscroll & 7);
+   while(x < width) {
+@@ -73,7 +74,8 @@
+     hoffset &= hmask;
+     voffset &= vmask;
+ 
+-    uint tileNumber = getTile(self, hoffset, voffset);
++    uint mapWord = tileMapWord(self, hoffset, voffset);
++    uint tileNumber = ppu.vram[mapWord];
+     uint mirrorY = tileNumber & 0x8000 ? 7 : 0;
+     uint mirrorX = tileNumber & 0x4000 ? 7 : 0;
+     uint8 tilePriority = self.priority_enabled[bool(tileNumber & 0x2000)] ? self.priority[bool(tileNumber & 0x2000)] : 0;
+@@ -115,6 +117,7 @@
+         mosaicCounter = self.mosaicEnable ? io.mosaic.size << hires : 1;
+         mosaicPalette = color;
+         mosaicPriority = tilePriority;
++        mosaicIdentity = REA::identity(tileNumber << colorShift, mapWord, directColorMode ? paletteNumber : paletteIndex, 2u << self.tileMode, mirrorX, mirrorY, io.bgMode, directColorMode);
+         if(directColorMode) {
+           mosaicColor = directColor(paletteNumber, mosaicPalette);
+         } else {
+@@ -124,8 +127,8 @@
+       if(!mosaicPalette) continue;
+ 
+       if(!hires) {
+-        if(self.aboveEnable && !windowAbove[x]) plotAbove(x, source, mosaicPriority, mosaicColor);
+-        if(self.belowEnable && !windowBelow[x]) plotBelow(x, source, mosaicPriority, mosaicColor);
++        if(self.aboveEnable && !windowAbove[x]) plotAbove(x, source, mosaicPriority, mosaicColor, mosaicIdentity);
++        if(self.belowEnable && !windowBelow[x]) plotBelow(x, source, mosaicPriority, mosaicColor, mosaicIdentity);
+       } else {
+         uint X = x >> 1;
+         if(!ppu.hd()) {
+@@ -144,6 +147,10 @@
+ }
+ 
+ auto PPU::Line::getTile(PPU::IO::Background& self, uint hoffset, uint voffset) -> uint {
++  return ppu.vram[tileMapWord(self, hoffset, voffset)];
++}
++
++auto PPU::Line::tileMapWord(PPU::IO::Background& self, uint hoffset, uint voffset) -> uint {
+   bool hires = io.bgMode == 5 || io.bgMode == 6;
+   uint tileHeight = 3 + self.tileSize;
+   uint tileWidth = !hires ? tileHeight : 4;
+@@ -154,5 +161,5 @@
+   uint offset = (tileY & 0x1f) << 5 | (tileX & 0x1f);
+   if(tileX & 0x20) offset += screenX;
+   if(tileY & 0x20) offset += screenY;
+-  return ppu.vram[self.screenAddress + offset & 0x7fff];
++  return self.screenAddress + offset & 0x7fff;
+ }
+--- a/bsnes/sfc/ppu-fast/object.cpp
++++ b/bsnes/sfc/ppu-fast/object.cpp
+@@ -89,6 +89,7 @@
+ 
+       if(tileCount++ >= ppu.TileLimit) break;
+       tiles[tileCount - 1] = tile;
++      if(REA::identifying()) REA::object_tile(tileCount - 1, REA::identity(address & 0x7ff0, item.index, tile.palette, 4, object.hflip, object.vflip, io.bgMode));
+     }
+   }
+ 
+@@ -113,6 +114,7 @@
+         color += tile.data >> shift + 21 & 8;
+         if(color) {
+           palette[tileX] = tile.palette + color;
++          if(REA::identifying()) REA::object_pixel(tileX, n);
+           priority[tileX] = self.priority_enabled[tile.priority] ? self.priority[tile.priority] : 0;
+         }
+       }
+@@ -123,8 +125,8 @@
+   for(uint x : range(256)) {
+     if(!priority[x]) continue;
+     uint8 source = palette[x] < 192 ? Source::OBJ1 : Source::OBJ2;
+-    if(self.aboveEnable && !windowAbove[x]) plotAbove(x, source, priority[x], cgram[palette[x]]);
+-    if(self.belowEnable && !windowBelow[x]) plotBelow(x, source, priority[x], cgram[palette[x]]);
++    if(self.aboveEnable && !windowAbove[x]) plotAbove(x, source, priority[x], cgram[palette[x]], REA::object_identity(x));
++    if(self.belowEnable && !windowBelow[x]) plotBelow(x, source, priority[x], cgram[palette[x]], REA::object_identity(x));
+   }
+ }
+ 
 --- a/bsnes/sfc/ppu-fast/line.cpp
 +++ b/bsnes/sfc/ppu-fast/line.cpp
 @@ -51,6 +51,8 @@
@@ -40,21 +145,25 @@
    ? (!ppu.hires() ? 256 : 512)
    : (256 * scale * scale));
 +
-+  if(!hd && !ss) REA::begin_line(((this->y + (!ppu.latch.overscan ? 7 : 0)) * 1024 + (ppu.interlace() && field() ? 512 : 0)), width);
++  if(!hd && !ss) REA::begin_line(((this->y + (!ppu.latch.overscan ? 7 : 0)) * 1024 + (ppu.interlace() && field() ? 512 : 0)), width, io.bgMode);
  
    if(io.displayDisable) {
      memory::fill<uint16>(output, width);
-@@ -142,11 +144,13 @@
+@@ -140,13 +142,15 @@
+        + (paletteColor << 7 & 0x6000) + (paletteIndex << 10 & 0x1000);  //B
+ }
  
- auto PPU::Line::plotAbove(uint x, uint8 source, uint8 priority, uint16 color) -> void {
+-auto PPU::Line::plotAbove(uint x, uint8 source, uint8 priority, uint16 color) -> void {
++auto PPU::Line::plotAbove(uint x, uint8 source, uint8 priority, uint16 color, uint64 identity) -> void {
    if(ppu.hd()) return plotHD(above, x, source, priority, color, false, false);
-+  REA::sample(((this->y + (!ppu.latch.overscan ? 7 : 0)) * 1024 + (ppu.interlace() && field() ? 512 : 0)), x, ppu.hires() ? 512 : 256, source, 0, priority, ppu.lightTable[io.displayBrightness][color], io.pseudoHires || io.bgMode == 5 || io.bgMode == 6);
++  REA::sample(((this->y + (!ppu.latch.overscan ? 7 : 0)) * 1024 + (ppu.interlace() && field() ? 512 : 0)), x, ppu.hires() ? 512 : 256, source, 0, priority, ppu.lightTable[io.displayBrightness][color], io.pseudoHires || io.bgMode == 5 || io.bgMode == 6, identity);
    if(priority > above[x].priority) above[x] = {source, priority, color};
  }
  
- auto PPU::Line::plotBelow(uint x, uint8 source, uint8 priority, uint16 color) -> void {
+-auto PPU::Line::plotBelow(uint x, uint8 source, uint8 priority, uint16 color) -> void {
++auto PPU::Line::plotBelow(uint x, uint8 source, uint8 priority, uint16 color, uint64 identity) -> void {
    if(ppu.hd()) return plotHD(below, x, source, priority, color, false, false);
-+  REA::sample(((this->y + (!ppu.latch.overscan ? 7 : 0)) * 1024 + (ppu.interlace() && field() ? 512 : 0)), x, ppu.hires() ? 512 : 256, source, 1, priority, ppu.lightTable[io.displayBrightness][color], io.pseudoHires || io.bgMode == 5 || io.bgMode == 6);
++  REA::sample(((this->y + (!ppu.latch.overscan ? 7 : 0)) * 1024 + (ppu.interlace() && field() ? 512 : 0)), x, ppu.hires() ? 512 : 256, source, 1, priority, ppu.lightTable[io.displayBrightness][color], io.pseudoHires || io.bgMode == 5 || io.bgMode == 6, identity);
    if(priority > below[x].priority) below[x] = {source, priority, color};
  }
  
@@ -74,7 +183,23 @@
      emulator = new SuperFamicom::Interface;
      program = new Program;
  
-@@ -195,6 +197,7 @@
+@@ -152,6 +154,7 @@
+ 
+ EXPORT void snes_power(void)
+ {
++    REA::invalidate();
+     emulator->power();
+ }
+ 
+@@ -163,6 +166,7 @@
+ 
+ EXPORT void snes_reset(void)
+ {
++    REA::invalidate();
+     emulator->reset();
+ }
+ 
+@@ -195,6 +199,7 @@
  
  EXPORT void snes_unserialize(const uint8_t* data, int size)
  {
@@ -82,14 +207,22 @@
      serializer s(data, size);
      emulator->unserialize(s);
  }
-@@ -342,6 +345,7 @@
+@@ -342,6 +347,7 @@
  EXPORT void* snes_get_memory_region(int id, int* size, int* word_size)
  {
      if(!emulator->loaded()) return nullptr;
-+    if(id == REA::ControlId || id == REA::PixelsId) return REA::region(id, size, word_size);
++    if(id == REA::ControlId || id == REA::PixelsId || id == REA::IdentityId) return REA::region(id, size, word_size);
      bool fast_ppu = SuperFamicom::system.fastPPU();
  
      switch(id)
+@@ -539,6 +545,7 @@
+ // should be called on savestate load, to get msu files loaded and in the correct state
+ EXPORT void snes_msu_sync()
+ {
++    REA::invalidate();
+     if (cartridge.has.MSU1) {
+         msu1.dataOpen();
+         msu1.audioOpen();
 --- a/bsnes/target-bsnescore/program.cpp
 +++ b/bsnes/target-bsnescore/program.cpp
 @@ -433,6 +433,7 @@

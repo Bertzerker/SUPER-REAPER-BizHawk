@@ -30,4 +30,23 @@ int main() {
  REA::invalidate();assert(!h->valid);
  h->enabled=0;REA::publish(output.data()+row,1024,256,224,8,1,true,false);assert(!h->valid && !h->byteLength);
  h->enabled=1;REA::begin_frame(false);REA::publish(output.data()+row,1024,256,224,8,1,true,true);assert(!h->valid);
+ auto identities=static_cast<uint64_t*>(REA::region(REA::IdentityId,&size,&word));
+ h->reserved=1;h->sequence=8;
+ const auto bgMain=REA::identity(16,0x10a4,0,4,true,false,1);
+ const auto bgSub=REA::identity(32,0x10ac,16,4,false,true,1);
+ const auto obj=REA::identity(48,127,240,4,false,true,1);
+ REA::begin_frame(false);REA::begin_line(row,256,1);
+ REA::sample(row,10,256,0,0,5,0x1234,false,bgMain);
+ REA::sample(row,10,256,0,0,2,0x4321,false,bgSub);
+ REA::sample(row,10,256,0,1,3,0x4321,false,bgSub);
+ REA::object_tile(0,obj);REA::object_pixel(11,0);
+ REA::sample(row,11,256,5,0,3,0x1234,false,REA::object_identity(11));
+ REA::publish(output.data()+row,1024,256,224,8,1,true,false);
+ assert(h->valid && (h->reserved&3)==3);
+ assert(identities[10]==bgMain && identities[57344+10]==bgSub);
+ assert(identities[8*57344+11]==obj && identities[8*57344+12]==0);
+ REA::begin_frame(false);REA::begin_line(row,256,7);
+ REA::publish(output.data()+row,1024,256,224,8,1,true,false);
+ assert(h->valid && h->reserved==5);
+ REA::invalidate();assert(h->reserved==1);
 }
