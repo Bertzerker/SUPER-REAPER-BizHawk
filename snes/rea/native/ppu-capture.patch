@@ -1,0 +1,110 @@
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ NEED_LIBCO := 1
+ 
+ CXXFLAGS := -std=c++17 \
+-	-I../libco -I./bsnes \
++	-I../libco -I./bsnes -I./rea \
+ 	-Werror=int-to-pointer-cast \
+ 	-Wno-parentheses -Wno-sign-compare -Wno-unused-variable -Wno-trigraphs -Wno-switch -Wno-reorder -Wno-misleading-indentation \
+ 	-Wno-unqualified-std-cast-call -Wno-mismatched-tags -Wno-overloaded-virtual -Wno-bitwise-instead-of-logical \
+@@ -52,6 +52,6 @@
+ 	$(ROOT_DIR)/bsnes/sfc/slot/slot.cpp \
+ 	$(ROOT_DIR)/bsnes/target-bsnescore/bsnescore.cpp
+ 
+-SRCS = $(SRCS_PROCESSORS) $(SRCS_EMULATOR) $(SRCS_GB) $(SRCS_SFC)
++SRCS = $(ROOT_DIR)/rea/rea_capture.cpp $(SRCS_PROCESSORS) $(SRCS_EMULATOR) $(SRCS_GB) $(SRCS_SFC)
+ 
+ include ../common.mak
+--- a/bsnes/sfc/ppu-fast/ppu.cpp
++++ b/bsnes/sfc/ppu-fast/ppu.cpp
+@@ -1,4 +1,5 @@
+ #include <sfc/sfc.hpp>
++#include <rea_capture.hpp>
+ 
+ namespace SuperFamicom {
+ 
+@@ -115,6 +116,7 @@
+       }
+     }
+ 
++    REA::begin_frame(io.interlace);
+     ppubase.display.interlace = io.interlace;
+     ppubase.display.overscan = io.overscan;
+     latch.overscan = io.overscan;
+--- a/bsnes/sfc/ppu-fast/line.cpp
++++ b/bsnes/sfc/ppu-fast/line.cpp
+@@ -51,6 +51,8 @@
+   auto width = (!hd
+   ? (!ppu.hires() ? 256 : 512)
+   : (256 * scale * scale));
++
++  if(!hd && !ss) REA::begin_line(((this->y + (!ppu.latch.overscan ? 7 : 0)) * 1024 + (ppu.interlace() && field() ? 512 : 0)), width);
+ 
+   if(io.displayDisable) {
+     memory::fill<uint16>(output, width);
+@@ -142,11 +144,13 @@
+ 
+ auto PPU::Line::plotAbove(uint x, uint8 source, uint8 priority, uint16 color) -> void {
+   if(ppu.hd()) return plotHD(above, x, source, priority, color, false, false);
++  REA::sample(((this->y + (!ppu.latch.overscan ? 7 : 0)) * 1024 + (ppu.interlace() && field() ? 512 : 0)), x, ppu.hires() ? 512 : 256, source, 0, priority, ppu.lightTable[io.displayBrightness][color], io.pseudoHires || io.bgMode == 5 || io.bgMode == 6);
+   if(priority > above[x].priority) above[x] = {source, priority, color};
+ }
+ 
+ auto PPU::Line::plotBelow(uint x, uint8 source, uint8 priority, uint16 color) -> void {
+   if(ppu.hd()) return plotHD(below, x, source, priority, color, false, false);
++  REA::sample(((this->y + (!ppu.latch.overscan ? 7 : 0)) * 1024 + (ppu.interlace() && field() ? 512 : 0)), x, ppu.hires() ? 512 : 256, source, 1, priority, ppu.lightTable[io.displayBrightness][color], io.pseudoHires || io.bgMode == 5 || io.bgMode == 6);
+   if(priority > below[x].priority) below[x] = {source, priority, color};
+ }
+ 
+--- a/bsnes/target-bsnescore/bsnescore.cpp
++++ b/bsnes/target-bsnescore/bsnescore.cpp
+@@ -1,4 +1,5 @@
+ #include "bsnescore.hpp"
++#include <rea_capture.hpp>
+ #include "callbacks.h"
+ #include <sfc/sfc.hpp>
+ #include <emulibc.h>
+@@ -124,6 +125,7 @@
+ EXPORT void snes_init(SnesInitData* init_data)
+ {
+     fprintf(stderr, "snes_init was called!\n");
++    REA::initialize();
+     emulator = new SuperFamicom::Interface;
+     program = new Program;
+ 
+@@ -195,6 +197,7 @@
+ 
+ EXPORT void snes_unserialize(const uint8_t* data, int size)
+ {
++    REA::invalidate();
+     serializer s(data, size);
+     emulator->unserialize(s);
+ }
+@@ -342,6 +345,7 @@
+ EXPORT void* snes_get_memory_region(int id, int* size, int* word_size)
+ {
+     if(!emulator->loaded()) return nullptr;
++    if(id == REA::ControlId || id == REA::PixelsId) return REA::region(id, size, word_size);
+     bool fast_ppu = SuperFamicom::system.fastPPU();
+ 
+     switch(id)
+--- a/bsnes/target-bsnescore/program.cpp
++++ b/bsnes/target-bsnescore/program.cpp
+@@ -433,6 +433,7 @@
+ 	// note: scale is not used currently, but as bsnes has builtin scaling support (something something mode 7)
+ 	// we might actually wanna make use of that?
+ 	pitch >>= 1;
++	uint reaCropRows = !overscan ? 8 * (height / 240) : 0;
+ 	if (!overscan)
+ 	{
+ 		uint multiplier = height / 240;
+@@ -442,6 +443,7 @@
+ 
+ 	// fprintf(stderr, "got a video frame with dimensions h: %d, w: %d, p: %d, overscan: %d, scale: %d\n", height, width, pitch, overscan, scale);
+ 
++    REA::publish(data, pitch, width, height, reaCropRows, scale, ::SuperFamicom::system.fastPPU(), ::SuperFamicom::ppufast.latch.hd || ::SuperFamicom::ppufast.latch.ss);
+  	snesCallbacks.snes_video_frame(data, width, height, pitch);
+ }
+ 

@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "name": "comment-test-1793838692988",
+  "noteId": "569f7645-0c6d-48a1-9a40-5de64573e85f",
+  "stateNoteId": "39f81106-337b-4f1c-81d8-c655f97c415f",
+  "quarterSpeedFrames": 17,
+  "normalSpeedFrames": 34,
+  "checks": [
+    "Capture pauses, saves movie, and binds native render + memory to movie frame 60 / input row 59",
+    "Markdown, JSON and Mermaid notes save with revision protection",
+    "Archived BK2 hash and persistent evidence survive later frames",
+    "Play, pause, readonly restart and quarter-speed playback work",
+    "Savestate-anchored movies use their own frame numbering"
+  ]
+}

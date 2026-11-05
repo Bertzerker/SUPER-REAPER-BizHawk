@@ -1,0 +1,45 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "check": "Raster-time palette/brightness retained despite different end-of-frame CGRAM; final color math remains in composite",
+      "pass": true
+    },
+    {
+      "check": "HDMA scroll and window clipping are captured at their actual scanlines",
+      "pass": true
+    },
+    {
+      "check": "OBJ panel respects the renderer sprite limit rather than drawing every OAM entry",
+      "pass": true
+    },
+    {
+      "check": "Mode 7 samples come through the native renderer",
+      "pass": true
+    },
+    {
+      "check": "512-pixel hires preserves alternating sub/main input samples",
+      "pass": true
+    },
+    {
+      "check": "Interlaced output and native layer buffers agree across both fields",
+      "pass": true
+    },
+    {
+      "check": "Capture on/off leaves complete core savestate and framebuffer hashes unchanged",
+      "pass": true,
+      "coreStateSha256": "B380472F39F0F3F39591E1357C1713784DD2447615F6812906E43B5E15462895",
+      "outputSha256": "8ac26104bc353e8e7e4ac7c613617301bb795d51fb8edf17f567a39b437bc5bd"
+    },
+    {
+      "check": "User-provided Contra ROM produces one synchronized six-view native capture",
+      "pass": true,
+      "frame": 600,
+      "mode": 1,
+      "rom": {
+        "name": "Contra IV - The Alien Wars (USA) (Beta)",
+        "hash": "DABA9EBB5162FC4631D663AB5681C2518F6311E5"
+      }
+    }
+  ]
+}

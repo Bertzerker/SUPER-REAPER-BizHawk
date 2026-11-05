@@ -1,0 +1,129 @@
+{
+  "duration_seconds": 10.0603564,
+  "emulated_fps": 60.17920627885447,
+  "wall_emulated_fps": 60.137034509035885,
+  "nominal_fps": 60.098811862348406,
+  "region": "NTSC",
+  "emulation_speed_percent": 100.1337703924833,
+  "websocket_captures_per_second": 60.17920627885447,
+  "unique_ids": 603,
+  "captureEvery": 1,
+  "capture_p95_ms": 0.4561,
+  "encode_p95_ms": 1.4493,
+  "transport_interval_p95_ms": 26.491999999999734,
+  "server_drops": 0,
+  "invalid_packets": 0,
+  "invalid_native_frames": 0,
+  "source_gaps": 0,
+  "duplicate_source_frames": 0,
+  "stream_megabytes_per_second": 16.77597654492638,
+  "source_megabytes_per_second": 284.2067716408138,
+  "viewers": [
+    {
+      "duration_seconds": 5.016,
+      "displayed_per_second": 0,
+      "received_per_second": 59.609250398724086,
+      "replaced": 0,
+      "last_rate": 0,
+      "last_p95_ms": 0,
+      "frozen": true
+    },
+    {
+      "duration_seconds": 5.001,
+      "displayed_per_second": 29.994001199760046,
+      "received_per_second": 59.98800239952009,
+      "replaced": 151,
+      "last_rate": 30,
+      "last_p95_ms": 34.399999998509884,
+      "frozen": false
+    }
+  ],
+  "frames_received": 603,
+  "frame_start": 2046,
+  "frame_end": 2651,
+  "samples": [
+    {
+      "time": 5157.8221,
+      "received": 2475,
+      "invalid": 0,
+      "dropped": 0,
+      "source_fps": 22.8110599078341,
+      "lastFrameAgeMs": 3,
+      "bridge": true,
+      "streamPort": 8901,
+      "latest": "cf179154ca8c4b8992c478f5e0077ed8-2475",
+      "retained": 16,
+      "pinned": 16,
+      "held": 0,
+      "streamBytes": 621027866,
+      "sourceBytes": 11579082335,
+      "pipelineMs": 1.2241999999969266,
+      "pending": [],
+      "emulatedFps": 60.483870967741936,
+      "viewers": [
+        {
+          "at": 1793839030794,
+          "received": 7254,
+          "displayed": 0,
+          "replaced": 0,
+          "frozen": true,
+          "rate": 0,
+          "p95": 0
+        },
+        {
+          "at": 1793839030092,
+          "received": 2141,
+          "displayed": 1919,
+          "replaced": 118,
+          "frozen": false,
+          "lastFrame": 2284,
+          "rate": 30,
+          "p95": 34.30000000074506
+        }
+      ]
+    },
+    {
+      "time": 10163.6542,
+      "received": 2776,
+      "invalid": 0,
+      "dropped": 0,
+      "source_fps": 24.456641440615996,
+      "lastFrameAgeMs": 3,
+      "bridge": true,
+      "streamPort": 8901,
+      "latest": "cf179154ca8c4b8992c478f5e0077ed8-2776",
+      "retained": 16,
+      "pinned": 16,
+      "held": 0,
+      "streamBytes": 681341544,
+      "sourceBytes": 12996915863,
+      "pipelineMs": 0.752200000002631,
+      "pending": [],
+      "emulatedFps": 60.090135202804206,
+      "viewers": [
+        {
+          "at": 1793839035810,
+          "received": 7553,
+          "displayed": 0,
+          "replaced": 0,
+          "frozen": true,
+          "rate": 0,
+          "p95": 0
+        },
+        {
+          "at": 1793839035093,
+          "received": 2441,
+          "displayed": 2069,
+          "replaced": 269,
+          "frozen": false,
+          "lastFrame": 2585,
+          "rate": 30,
+          "p95": 34.399999998509884
+        }
+      ]
+    }
+  ],
+  "minimum_five_second_capture_rate": 60,
+  "minimum_five_second_viewer_rate": 29.994001199760046,
+  "full_speed_pass": false
+}

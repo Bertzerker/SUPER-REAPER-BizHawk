@@ -1,0 +1,15 @@
+{
+  "bizhawk": "2.11.1",
+  "assets": [
+    {
+      "path": "dist/bsnes-rea.wbx.zst",
+      "sha256": "802cec5f3f8dc1e6ad6009ba1526f54345a18c9c56b9d103e9422ca198c6bf43",
+      "bytes": 652828
+    },
+    {
+      "path": "dist/REA.SNES.dll",
+      "sha256": "bdd0410fb77a3a24e5f2294cb8fe67487672788889f65c264e772beb1be5c4cf",
+      "bytes": 67584
+    }
+  ]
+}

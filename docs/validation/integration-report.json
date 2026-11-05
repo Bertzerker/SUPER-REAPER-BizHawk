@@ -1,0 +1,146 @@
+{
+  "ok": true,
+  "base": "http://127.0.0.1:8900",
+  "name": "diagnostic-1793838605452",
+  "checks": [
+    {
+      "check": "Single diagnostic bridge with native PPU capture interface",
+      "pass": true
+    },
+    {
+      "check": "Bounded input steps affect actual SNES RAM",
+      "pass": true,
+      "recorded": [
+        {
+          "frame": 60,
+          "wram": "d56895cb577cb0c3290fe9298d84cc7078cf70fa3d41541601160e8265cfb43e",
+          "output": "a26c94dea31b5699ab4989bb17d161ff1850a9c815dae2a2f6c4a297089977ef",
+          "playerX": 64
+        },
+        {
+          "frame": 90,
+          "wram": "17cd144b69e6ea6f44d97c200d6c2815f1855e3a9247071d4d64473874f0d33c",
+          "output": "8ac26104bc353e8e7e4ac7c613617301bb795d51fb8edf17f567a39b437bc5bd",
+          "playerX": 83
+        },
+        {
+          "frame": 105,
+          "wram": "5055a4b71b3eab4ae1f695662ae651d4864432fcc07d4cf9d5d223dcb055fb10",
+          "output": "bd52e39281a87d9cf1d5cd6bf54200edea55425f60ba4a5b97cf1028af62ab52",
+          "playerX": 81
+        },
+        {
+          "frame": 110,
+          "wram": "041d347888b606991e08ee98a3058e4c677a7bf27653ac430e54b1ff6e7198ca",
+          "output": "f1f31bdebe34cc74cfae7df6436d7b815fe36715e46388497044c90e7238b084",
+          "playerX": 80
+        }
+      ]
+    },
+    {
+      "check": "Six native views, with absent BG4 samples captured as transparent",
+      "pass": true
+    },
+    {
+      "check": "Movie input log contains exact requested buttons for every frame",
+      "pass": true
+    },
+    {
+      "check": "Saved BK2 replays twice with matching RAM and output hashes",
+      "pass": true,
+      "replays": 2
+    },
+    {
+      "check": "Checkpoint restores state/output and invalidates stale native layer evidence",
+      "pass": true
+    },
+    {
+      "check": "Movie anchored to current state records and replays",
+      "pass": true
+    },
+    {
+      "check": "Pause interrupts a bounded AI input run",
+      "pass": true
+    }
+  ],
+  "recorded": [
+    {
+      "frame": 60,
+      "wram": "d56895cb577cb0c3290fe9298d84cc7078cf70fa3d41541601160e8265cfb43e",
+      "output": "a26c94dea31b5699ab4989bb17d161ff1850a9c815dae2a2f6c4a297089977ef",
+      "playerX": 64
+    },
+    {
+      "frame": 90,
+      "wram": "17cd144b69e6ea6f44d97c200d6c2815f1855e3a9247071d4d64473874f0d33c",
+      "output": "8ac26104bc353e8e7e4ac7c613617301bb795d51fb8edf17f567a39b437bc5bd",
+      "playerX": 83
+    },
+    {
+      "frame": 105,
+      "wram": "5055a4b71b3eab4ae1f695662ae651d4864432fcc07d4cf9d5d223dcb055fb10",
+      "output": "bd52e39281a87d9cf1d5cd6bf54200edea55425f60ba4a5b97cf1028af62ab52",
+      "playerX": 81
+    },
+    {
+      "frame": 110,
+      "wram": "041d347888b606991e08ee98a3058e4c677a7bf27653ac430e54b1ff6e7198ca",
+      "output": "f1f31bdebe34cc74cfae7df6436d7b815fe36715e46388497044c90e7238b084",
+      "playerX": 80
+    }
+  ],
+  "replays": [
+    [
+      {
+        "frame": 60,
+        "wram": "d56895cb577cb0c3290fe9298d84cc7078cf70fa3d41541601160e8265cfb43e",
+        "output": "a26c94dea31b5699ab4989bb17d161ff1850a9c815dae2a2f6c4a297089977ef",
+        "playerX": 64
+      },
+      {
+        "frame": 90,
+        "wram": "17cd144b69e6ea6f44d97c200d6c2815f1855e3a9247071d4d64473874f0d33c",
+        "output": "8ac26104bc353e8e7e4ac7c613617301bb795d51fb8edf17f567a39b437bc5bd",
+        "playerX": 83
+      },
+      {
+        "frame": 105,
+        "wram": "5055a4b71b3eab4ae1f695662ae651d4864432fcc07d4cf9d5d223dcb055fb10",
+        "output": "bd52e39281a87d9cf1d5cd6bf54200edea55425f60ba4a5b97cf1028af62ab52",
+        "playerX": 81
+      },
+      {
+        "frame": 110,
+        "wram": "041d347888b606991e08ee98a3058e4c677a7bf27653ac430e54b1ff6e7198ca",
+        "output": "f1f31bdebe34cc74cfae7df6436d7b815fe36715e46388497044c90e7238b084",
+        "playerX": 80
+      }
+    ],
+    [
+      {
+        "frame": 60,
+        "wram": "d56895cb577cb0c3290fe9298d84cc7078cf70fa3d41541601160e8265cfb43e",
+        "output": "a26c94dea31b5699ab4989bb17d161ff1850a9c815dae2a2f6c4a297089977ef",
+        "playerX": 64
+      },
+      {
+        "frame": 90,
+        "wram": "17cd144b69e6ea6f44d97c200d6c2815f1855e3a9247071d4d64473874f0d33c",
+        "output": "8ac26104bc353e8e7e4ac7c613617301bb795d51fb8edf17f567a39b437bc5bd",
+        "playerX": 83
+      },
+      {
+        "frame": 105,
+        "wram": "5055a4b71b3eab4ae1f695662ae651d4864432fcc07d4cf9d5d223dcb055fb10",
+        "output": "bd52e39281a87d9cf1d5cd6bf54200edea55425f60ba4a5b97cf1028af62ab52",
+        "playerX": 81
+      },
+      {
+        "frame": 110,
+        "wram": "041d347888b606991e08ee98a3058e4c677a7bf27653ac430e54b1ff6e7198ca",
+        "output": "f1f31bdebe34cc74cfae7df6436d7b815fe36715e46388497044c90e7238b084",
+        "playerX": 80
+      }
+    ]
+  ]
+}
